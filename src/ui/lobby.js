@@ -1,5 +1,6 @@
 import { MSG, MAX_PLAYERS } from '../network/protocol.js';
 import { getAppearance, normalizeAppearance } from '../game/customization.js';
+import { DEFAULT_MAP_ID, getMap, MAPS } from '../game/world.js';
 
 const $ = s => document.querySelector(s);
 const NICKNAME_KEY = 'clash.nickname';
@@ -29,6 +30,7 @@ export class Lobby {
     this.inRoom = false;
     this.players = [];   // [{ id, name }] — id réseau (0 = hôte)
     this.me = 0;
+    this.selectedMap = DEFAULT_MAP_ID;
     this.started = false;
     this.postGame = false;
     this.kickReason = '';
@@ -36,6 +38,12 @@ export class Lobby {
     this.game.onFinish = () => this.onGameFinished();
     this.game.onReplayVote = () => this.toggleReplayVote();
     this.game.onReplayConfirm = () => this.confirmReplay();
+  }
+
+  syncMap() {
+    const map = getMap(this.selectedMap);
+    $('#map-description').textContent = map.description;
+    window.clashRoster?.setMap(map);
   }
 
   init() {
@@ -54,7 +62,23 @@ export class Lobby {
     $('#copy-code').onclick = () => navigator.clipboard?.writeText(n.roomCode).then(() => this.status('Code copié.'));
     $('#leave-lobby').onclick = () => this.leave();
     $('#win-mode').onchange = () => this.syncSettings();
+    $('#game-mode').onchange = () => this.syncSettings();
+    const mapSelect = $('#map-select');
+    mapSelect.replaceChildren(...MAPS.map(map => {
+      const option = document.createElement('option');
+      option.value = map.id;
+      option.textContent = map.name;
+      return option;
+    }));
+    mapSelect.value = this.selectedMap;
+    mapSelect.onchange = () => {
+      if (!this.network.isHost) return;
+      this.selectedMap = getMap(mapSelect.value).id;
+      this.syncMap();
+      this.publish();
+    };
     $('#start-game').onclick = () => this.startGame();
+    this.syncMap();
     this.syncSettings();
 
     n.on(MSG.HELLO, d => this.onHello(d));
@@ -176,7 +200,9 @@ export class Lobby {
 
   publish() {
     this.players.sort((a, b) => a.id - b.id);
-    for (const p of this.players) if (p.id !== 0) this.network.sendTo(p.id, MSG.ROSTER, { players: this.players, you: p.id });
+    for (const p of this.players) if (p.id !== 0) {
+      this.network.sendTo(p.id, MSG.ROSTER, { players: this.players, you: p.id, map: this.selectedMap });
+    }
     this.render();
   }
 
@@ -184,6 +210,9 @@ export class Lobby {
     if (this.started || !Array.isArray(d.players)) return;
     this.players = d.players;
     this.me = d.you;
+    this.selectedMap = getMap(d.map).id;
+    $('#map-select').value = this.selectedMap;
+    this.syncMap();
     this.render();
   }
 
@@ -216,18 +245,22 @@ export class Lobby {
   }
 
   syncSettings() {
-    const time = $('#win-mode').value === 'time';
-    $('#target-wrap').classList.toggle('hidden', time);
-    $('#duration-wrap').classList.toggle('hidden', !time);
+    const flag = $('#game-mode').value === 'flag';
+    const time = !flag && $('#win-mode').value === 'time';
+    $('#win-mode-wrap').classList.toggle('hidden', flag);
+    $('#target-wrap').classList.toggle('hidden', flag || time);
+    $('#duration-wrap').classList.toggle('hidden', flag || !time);
   }
 
   startGame() {
     if (!this.network.isHost || this.players.length < 2) return;
     const config = {
+      gameMode: $('#game-mode').value,
       mode: $('#win-mode').value,
       target: +$('#target-kills').value,
       duration: +$('#duration').value,
-      weapon: $('#weapon-rule').value
+      weapon: $('#weapon-rule').value,
+      map: this.selectedMap
     };
     this.launchGame(config, this.players);
   }
@@ -254,7 +287,9 @@ export class Lobby {
     this.replayVotes.clear();
     this.started = true;
     this.friends?.push();
-    this.game.start(config, you, names, appearances);
+    this.selectedMap = getMap(config.map).id;
+    this.syncMap();
+    this.game.start({ ...config, map: this.selectedMap }, you, names, appearances);
   }
 
   onGameFinished() {

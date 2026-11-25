@@ -127,6 +127,20 @@
             <div class="settings-grid">
 
               <label>
+                CARTE
+                <select id="map-select"></select>
+                <span id="map-description" class="map-description"></span>
+              </label>
+
+              <label>
+                MODE DE JEU
+                <select id="game-mode">
+                  <option value="deathmatch" selected>Combat classique</option>
+                  <option value="flag">Capture du drapeau</option>
+                </select>
+              </label>
+
+              <label id="win-mode-wrap">
                 CONDITION DE VICTOIRE
                 <select id="win-mode">
                   <option value="kills">Premier à X éliminations</option>
@@ -173,7 +187,7 @@
 
           <p class="footnote">
             L'hôte configure les règles et lance la partie.
-            De 2 à 16 joueurs, chacun pour soi.
+            De 2 à 16 joueurs.
           </p>
 
           <button id="open-settings-lobby" class="quiet">⚙ PARAMÈTRES</button>

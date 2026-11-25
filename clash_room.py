@@ -29,8 +29,9 @@ def pages_environment():
 
 def test():
     env = pages_environment()
+    env["VITE_EDITOR"] = "1"
     run([NPM, "run", "build"], env=env)
-    print(f"\nAperçu de production : {PAGES_URL}")
+    print(f"\nAperçu avec éditeur 3D : {PAGES_URL}")
     print("Arrête le serveur avec Ctrl+C.\n")
     try:
         run(

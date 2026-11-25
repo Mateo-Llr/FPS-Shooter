@@ -2,6 +2,9 @@
 
 Prototype MVP d'un FPS 1v1 navigateur, Three.js + PeerJS + Vite.
 
+Le salon propose trois cartes sélectionnables par l'hôte : Fonderie, Docks 09
+et Vieille Ville. Le choix est partagé aux invités et conservé lors d'une revanche.
+
 ## Prérequis
 - Node.js 20+
 - npm
@@ -26,6 +29,13 @@ Depuis la racine du projet, lance :
 python clash_room.py test
 ```
 Le script construit le site avec le chemin de base de GitHub Pages (`/FPS-Shooter/`), puis démarre l'aperçu de production. Ouvre `http://127.0.0.1:4173/FPS-Shooter/` et utilise `Ctrl+C` pour arrêter le serveur.
+
+Le mode test active aussi l'éditeur 3D local. Depuis **OUVRIR L'ÉDITEUR 3D**,
+tu peux déplacer, tourner et redimensionner les pièces du personnage, changer
+sa coupe et ses accessoires, ou modifier les couvertures et dimensions des cartes.
+**ENREGISTRER DANS LE PROJET** écrit les changements dans
+`src/game/editor-assets.json`; ils seront repris au prochain chargement. L'éditeur
+et son endpoint d'écriture ne sont pas inclus dans le déploiement public.
 
 ## Déploiement GitHub Pages
 1. Utilise un dépôt GitHub nommé `FPS-Shooter` (ou adapte `base` dans `vite.config.js` au nom exact du dépôt).

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { editorAssets } from './editor-assets.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -36,14 +37,18 @@ const crate = (base, band) => tex(256, (g, s) => {
   g.beginPath(); g.moveTo(20, 20); g.lineTo(s - 20, s - 20); g.moveTo(s - 20, 20); g.lineTo(20, s - 20); g.stroke();
 });
 
-const floor = () => tex(256, (g, s) => {
-  g.fillStyle = '#5d6467'; g.fillRect(0, 0, s, s);
+const floor = (base) => tex(256, (g, s) => {
+  g.fillStyle = base; g.fillRect(0, 0, s, s);
   speckle(g, s, 9000);
   g.fillStyle = 'rgba(0,0,0,.08)';
   for (let i = 0; i < 6; i++) g.beginPath(), g.arc(Math.random() * s, Math.random() * s, 20 + Math.random() * 30, 0, 7), g.fill();
   g.strokeStyle = 'rgba(0,0,0,.45)'; g.lineWidth = 3;
   g.strokeRect(0, 0, s, s);
 });
+
+export const MAPS = editorAssets.maps;
+export const DEFAULT_MAP_ID = MAPS[0].id;
+export const getMap = id => MAPS.find(map => map.id === id) || MAPS[0];
 
 const skyTexture = () => {
   const width = 1024, height = 512;
@@ -129,64 +134,75 @@ const skyTexture = () => {
 };
 
 export class World {
-  constructor(scene) {
+  constructor(scene, mapId = DEFAULT_MAP_ID) {
     this.scene = scene;
+    this.map = getMap(mapId);
     this.colliders = [];
+    this.objects = [];
+    this.materialSet = new Set();
+    this.halfWidth = this.map.halfWidth;
+    this.halfDepth = this.map.halfDepth;
 
     // Ciel + brouillard atmosphérique
     scene.background = skyTexture();
-    scene.fog = new THREE.Fog(0xa9bfcf, 30, 85);
+    scene.fog = new THREE.Fog(this.map.id === 'ruins' ? 0xb8a98c : 0xa9bfcf, 42, Math.max(this.halfWidth, this.halfDepth) * 3);
 
     // Lumières + ombres
-    scene.add(new THREE.HemisphereLight(0xdbe8f5, 0x303743, 1.2));
+    this.add(new THREE.HemisphereLight(0xdbe8f5, this.map.id === 'ruins' ? 0x514735 : 0x303743, 1.2));
     const sun = new THREE.DirectionalLight(0xffe2bd, 2.4);
     sun.position.set(-14, 24, 10);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
-    Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 70 });
+    Object.assign(sun.shadow.camera, {
+      left: -this.halfWidth, right: this.halfWidth,
+      top: this.halfDepth, bottom: -this.halfDepth, near: 1, far: 100
+    });
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.03;
-    scene.add(sun);
+    this.add(sun);
 
     const M = (map, o = {}) => new THREE.MeshStandardMaterial({ map, roughness: .92, ...o });
     this.materials = {
-      ground: M(floor()),
-      wall: M(panel('#8b9190')),
-      dark: M(panel('#3b444b')),
-      orange: M(crate('#c96d3d', '#7a3a1c')),
-      blue: M(crate('#4f6c80', '#2b3f4e')),
-      barrel: new THREE.MeshStandardMaterial({ color: 0x9b3a2a, metalness: .5, roughness: .45 })
+      ground: M(floor(this.map.colors.floor)),
+      wall: M(panel(this.map.colors.wall)),
+      dark: M(panel(this.map.colors.dark)),
+      orange: M(crate(this.map.colors.orange, '#52382c')),
+      blue: M(crate(this.map.colors.blue, '#293d43')),
+      barrel: new THREE.MeshStandardMaterial({ color: this.map.colors.barrel, metalness: .5, roughness: .45 })
     };
+    for (const material of Object.values(this.materials)) this.materialSet.add(material);
 
-    this.box(0, -0.25, 0, 40, .5, 40, this.materials.ground, false); // dessus du sol = y 0
+    this.box(0, -0.25, 0, this.halfWidth * 2, .5, this.halfDepth * 2, this.materials.ground, false); // dessus du sol = y 0
 
     // Limites de l'arène
-    this.box(0, 2, -20, 40, 4, .8, this.materials.dark);
-    this.box(0, 2, 20, 40, 4, .8, this.materials.dark);
-    this.box(-20, 2, 0, .8, 4, 40, this.materials.dark);
-    this.box(20, 2, 0, .8, 4, 40, this.materials.dark);
+    this.box(0, 2, -this.halfDepth, this.halfWidth * 2, 4, .8, this.materials.dark);
+    this.box(0, 2, this.halfDepth, this.halfWidth * 2, 4, .8, this.materials.dark);
+    this.box(-this.halfWidth, 2, 0, .8, 4, this.halfDepth * 2, this.materials.dark);
+    this.box(this.halfWidth, 2, 0, .8, 4, this.halfDepth * 2, this.materials.dark);
 
-    // Couvertures (symétriques)
-    [
-      [-8, 1, -7, 4, 2, 2, 'orange'], [8, 1, 7, 4, 2, 2, 'orange'],
-      [8, 1, -7, 3, 2, 2, 'blue'], [-8, 1, 7, 3, 2, 2, 'blue'],
-      [0, 1, -10, 7, 2, 1.2, 'wall'], [0, 1, 10, 7, 2, 1.2, 'wall'],
-      [-13, .65, 0, 1.5, 1.3, 4, 'orange'], [13, .65, 0, 1.5, 1.3, 4, 'orange'],
-      [-5, 1.5, 0, 1.2, 3, 1.2, 'dark'], [5, 1.5, 0, 1.2, 3, 1.2, 'dark'],
-      [-13, 2, -12, 6, 4, 5, 'wall'], [13, 2, 12, 6, 4, 5, 'wall'],
-      [0, 1, -2, 2, 2, 2, 'blue'], [0, 1, 2, 2, 2, 2, 'blue']
-    ].forEach(([x, y, z, w, h, d, m]) => this.box(x, y, z, w, h, d, this.materials[m]));
+    this.map.covers.forEach(([x, y, z, w, h, d, m], index) => {
+      const cover = this.box(x, y, z, w, h, d, this.materials[m]);
+      cover.name = `Cover ${index + 1}`;
+      cover.userData.editorId = `cover:${index}`;
+      cover.userData.editorType = 'cover';
+      cover.userData.mapCoverIndex = index;
+    });
 
     // Bidons
-    [[-3, -5], [3, 5], [-10, 3], [10, -3], [-3.8, -4.2]].forEach(([x, z]) => this.barrel(x, z));
+    this.map.barrels.forEach(([x, z]) => this.barrel(x, z));
 
     // Néons le long des murs + lumières d'ambiance
     const neon = new THREE.MeshBasicMaterial({ color: 0xff8a4a });
-    [[0, -19.55, 40, .12, .12], [0, 19.55, 40, .12, .12], [-19.55, 0, .12, .12, 40], [19.55, 0, .12, .12, 40]]
+    [
+      [0, -this.halfDepth + .45, this.halfWidth * 2, .12, .12],
+      [0, this.halfDepth - .45, this.halfWidth * 2, .12, .12],
+      [-this.halfWidth + .45, 0, .12, .12, this.halfDepth * 2],
+      [this.halfWidth - .45, 0, .12, .12, this.halfDepth * 2]
+    ]
       .forEach(([x, z, w, h, d]) => {
         const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), neon);
         m.position.set(x, 3.3, z);
-        scene.add(m);
+        this.add(m);
       });
     [
       { color: 0xff925e, intensity: 18, x: -11, z: -11 },
@@ -194,22 +210,53 @@ export class World {
     ].forEach(({ color, intensity, x, z }) => {
       const l = new THREE.PointLight(color, intensity, 22, 1.8);
       l.position.set(x, 3.4, z);
-      scene.add(l);
+      this.add(l);
     });
 
     // Marquages au sol
     const lineMat = new THREE.MeshBasicMaterial({ color: 0xcfc9b8 });
-    for (let x = -16; x <= 16; x += 4) {
-      const line = new THREE.Mesh(new THREE.BoxGeometry(.08, .012, 32), lineMat);
+    for (let x = -this.halfWidth + 4; x < this.halfWidth; x += 4) {
+      const line = new THREE.Mesh(new THREE.BoxGeometry(.08, .012, this.halfDepth * 2 - 8), lineMat);
       line.position.set(x, .006, 0);
-      scene.add(line);
+      this.add(line);
     }
 
-    // Points de réapparition (18, pour 16 joueurs max, orientés vers le centre)
-    this.spawns = [
-      [-15, 15], [15, -15], [0, 16], [0, -16], [-16, -5], [16, 5], [-4, 6], [4, -6], [-17, -17], [17, 17],
-      [-8, 16], [8, -16], [-17, 8], [17, -8], [-9, 0], [9, 0], [-12, 17], [12, -17]
-    ].map(([x, z]) => ({ x, z, yaw: Math.atan2(x, z) }));
+    // Points de réapparition (20, pour 16 joueurs max, orientés vers le centre)
+    this.spawns = Array.from({ length: 20 }, (_, i) => {
+      const angle = (i / 20) * Math.PI * 2;
+      const position = {
+        x: Math.cos(angle) * (this.halfWidth - 4.5),
+        y: 0,
+        z: Math.sin(angle) * (this.halfDepth - 4.5)
+      };
+      this.resolve(position);
+      return { ...position, yaw: Math.atan2(-position.x, -position.z) };
+    });
+  }
+
+  add(object) {
+    this.objects.push(object);
+    if (object.material) {
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+        this.materialSet.add(material);
+      }
+    }
+    this.scene.add(object);
+    return object;
+  }
+
+  dispose() {
+    for (const object of this.objects) {
+      this.scene.remove(object);
+      object.geometry?.dispose();
+    }
+    for (const material of this.materialSet) {
+      material.map?.dispose();
+      material.dispose();
+    }
+    this.scene.background?.dispose();
+    this.objects = [];
+    this.colliders = [];
   }
 
   addCollider(x, y, z, w, h, d) {
@@ -234,7 +281,7 @@ export class World {
     mesh.position.set(x, y, z);
     mesh.castShadow = collide;
     mesh.receiveShadow = true;
-    this.scene.add(mesh);
+    this.add(mesh);
     if (collide) this.addCollider(x, y, z, w, h, d);
     return mesh;
   }
@@ -243,23 +290,48 @@ export class World {
     const m = new THREE.Mesh(new THREE.CylinderGeometry(.45, .45, 1.1, 16), this.materials.barrel);
     m.position.set(x, .55, z);
     m.castShadow = m.receiveShadow = true;
-    this.scene.add(m);
+    this.add(m);
     this.addCollider(x, .55, z, .9, 1.1, .9);
   }
 
   resolve(p) {
-    p.x = Math.max(-18.8, Math.min(18.8, p.x));
-    p.z = Math.max(-18.8, Math.min(18.8, p.z));
-    for (const c of this.colliders) {
-      if (c.box.max.y <= p.y + 0.1) continue; // on est au-dessus : pas de collision latérale
-      const nx = Math.max(c.x - c.hw - .42, Math.min(c.x + c.hw + .42, p.x));
-      const nz = Math.max(c.z - c.hd - .42, Math.min(c.z + c.hd + .42, p.z));
-      const dx = p.x - nx, dz = p.z - nz;
-      if (dx * dx + dz * dz < .42 * .42) {
-        if (Math.abs(dx) > Math.abs(dz)) p.x = nx + Math.sign(dx || 1) * .43;
-        else p.z = nz + Math.sign(dz || 1) * .43;
+    const radius = .42;
+    p.x = Math.max(-this.halfWidth + .8 + radius, Math.min(this.halfWidth - .8 - radius, p.x));
+    p.z = Math.max(-this.halfDepth + .8 + radius, Math.min(this.halfDepth - .8 - radius, p.z));
+
+    for (let pass = 0; pass < 4; pass++) {
+      let moved = false;
+      for (const c of this.colliders) {
+        if (c.box.max.y <= p.y + 0.1) continue; // on est au-dessus : pas de collision latérale
+        const minX = c.x - c.hw, maxX = c.x + c.hw;
+        const minZ = c.z - c.hd, maxZ = c.z + c.hd;
+        const nx = Math.max(minX, Math.min(maxX, p.x));
+        const nz = Math.max(minZ, Math.min(maxZ, p.z));
+        const dx = p.x - nx, dz = p.z - nz;
+        const distanceSq = dx * dx + dz * dz;
+
+        if (distanceSq >= radius * radius) continue;
+        if (distanceSq > 1e-8) {
+          const distance = Math.sqrt(distanceSq);
+          const push = radius - distance;
+          p.x += dx / distance * push;
+          p.z += dz / distance * push;
+        } else {
+          const edges = [
+            { distance: p.x - minX, x: minX - radius, z: p.z },
+            { distance: maxX - p.x, x: maxX + radius, z: p.z },
+            { distance: p.z - minZ, x: p.x, z: minZ - radius },
+            { distance: maxZ - p.z, x: p.x, z: maxZ + radius }
+          ].sort((a, b) => a.distance - b.distance);
+          p.x = edges[0].x;
+          p.z = edges[0].z;
+        }
+        moved = true;
       }
+      if (!moved) break;
     }
+    p.x = Math.max(-this.halfWidth + 1.22, Math.min(this.halfWidth - 1.22, p.x));
+    p.z = Math.max(-this.halfDepth + 1.22, Math.min(this.halfDepth - 1.22, p.z));
   }
 
   /** Hauteur du sol sous le joueur : 0, ou le dessus d'un obstacle franchissable. */

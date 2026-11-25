@@ -25,6 +25,11 @@ const RESPAWN_TIME = 3;
 const SPAWN_PROTECTION = 1500;
 const WEAPON_IDS = ['shotgun', 'rifle', 'sniper', 'knife'];
 
+// Mode « capture du drapeau » : drapeau au centre de la carte.
+// Il faut rester SEUL dans la zone `seconds` secondes (cumulées) pour atteindre 100 %.
+const FLAG = { x: 0, z: 0, radius: 3, seconds: 20 };
+const shirtOf = id => SHIRT_COLORS[id % SHIRT_COLORS.length];
+
 const G_SPH = new THREE.SphereGeometry(1, 6, 6);
 const G_CYL = new THREE.CylinderGeometry(1, 1, 1, 5);
 const G_HOLE = new THREE.CircleGeometry(0.06, 8);
@@ -37,7 +42,7 @@ const M_HOLE = new THREE.MeshBasicMaterial({ color: 0x0d0d0d });
 const r2 = v => Math.round(v * 100) / 100;
 const encode = s => [r2(s.x), r2(s.y || 0), r2(s.z), r2(s.yaw || 0), r2(s.pitch || 0), s.crouch ? 1 : 0, Math.max(0, WEAPON_IDS.indexOf(s.w)), s.aim ? 1 : 0];
 const decode = a => ({
-  x: clampN(a[0], -25, 25), y: clampN(a[1], -1, 8), z: clampN(a[2], -25, 25),
+  x: clampN(a[0], -40, 40), y: clampN(a[1], -1, 8), z: clampN(a[2], -40, 40),
   yaw: a[3], pitch: a[4], crouch: !!a[5], w: WEAPON_IDS[a[6]] || 'rifle', aim: !!a[7]
 });
 const validPos = a => Array.isArray(a) && a.length >= 7 && a.every(Number.isFinite);
@@ -93,7 +98,14 @@ radial-gradient(circle at center,transparent 0,transparent 31vmin,#000 31.3vmin)
 .sb-panel.compact td{padding:5px 10px;font-size:16px}
 .sb-panel.compact .sb-title{font-size:44px}
 .sb-panel tr.gone td{opacity:.4}
-.sb-panel em.gone{background:#46545b;color:#cfd8dc}`;
+.sb-panel em.gone{background:#46545b;color:#cfd8dc}
+#flag-hud{position:fixed;top:92px;left:50%;transform:translateX(-50%);z-index:50;width:min(86vw,340px);text-align:center;pointer-events:none;display:none}
+#flag-hud .fh-status{font:800 15px 'Barlow Condensed',Arial,sans-serif;letter-spacing:.16em;color:#fff;text-shadow:0 2px 8px #000}
+#flag-hud.mine .fh-status{color:#7fe08a}
+#flag-hud.contested .fh-status{color:#ff6a5a}
+#flag-hud .fh-bar{height:8px;margin:6px 0;background:rgba(10,15,20,.8);border:1px solid #45545d;overflow:hidden}
+#flag-hud .fh-bar i{display:block;height:100%;width:0;background:#f07845;transition:width .15s linear}
+#flag-hud .fh-meta{display:flex;justify-content:space-between;font:700 13px 'Barlow Condensed',Arial,sans-serif;letter-spacing:.1em;color:#cfd8dc;text-shadow:0 2px 6px #000}`;
 
 export class Game {
   constructor(canvas, network) {
@@ -181,6 +193,8 @@ export class Game {
     this.lastSpawn = arr(() => null);
     this.score = arr(() => 0);
     this.stats = arr(() => ({ d: 0, h: 0 }));
+    this.capture = arr(() => 0); // % de capture du drapeau, propre à chaque joueur
+    this.zone = -1;              // id du joueur seul sur le drapeau, -1 = vide, -2 = contesté
   }
 
   nameOf(id) { return this.names[id] || 'Joueur'; }
@@ -271,6 +285,7 @@ export class Game {
     this.vignetteEl = add('vignette');
     this.scopeEl = add('scope');
     this.sbEl = add('scoreboard');
+    this.flagEl = add('flag-hud', '<div class="fh-status"></div><div class="fh-bar"><i></i></div><div class="fh-meta"><span class="fh-me"></span><span class="fh-lead"></span></div>');
     this.deathEl = add('death-screen', '<div class="t">ÉLIMINÉ</div><div class="s"></div><div class="c"></div>');
   }
 
@@ -321,6 +336,7 @@ export class Game {
       if (this.host || !this.active) return;
       if (Array.isArray(d.score)) this.score = d.score;
       if (Array.isArray(d.stats)) this.stats = d.stats;
+      if (Array.isArray(d.cap)) this.capture = d.cap;
       this.finish(d.reason || 'Fin de partie', '', d.winner ?? -1);
     });
     n.on('peer-left', d => this.playerLeft(d.id));
@@ -352,6 +368,8 @@ export class Game {
     this.score = s.score;
     this.dead = s.dead;
     this.clockValue = s.time;
+    if (Array.isArray(s.cap)) this.capture = s.cap;
+    if (Number.isFinite(s.zone)) this.zone = s.zone;
     for (const [id, a] of Object.entries(s.pos || {})) {
       const i = +id;
       if (i === this.me || !validPos(a)) continue;
@@ -405,7 +423,10 @@ export class Game {
 
   /** names[id] = pseudo (null si absent). `me` = mon id réseau (0 = hôte). */
   start(config, me, names, appearances = []) {
-    this.config = config;
+    this.world.dispose();
+    this.world = new World(this.scene, config.map || this.world.map.id);
+    this.controller.world = this.world;
+    this.config = { ...config, map: this.world.map.id, gameMode: config.gameMode === 'flag' ? 'flag' : 'deathmatch' };
     this.host = this.network.isHost;
     this.me = me;
     this.names = (names || []).map(n => n ?? null);
@@ -417,6 +438,7 @@ export class Game {
     this.gone = new Set();
 
     this.resetArrays();
+    this.buildFlag();
     this.elapsed = 0;
     this.clockValue = config.mode === 'time' ? config.duration : 0;
     this.over = false;
@@ -462,10 +484,11 @@ export class Game {
     document.querySelector('#game')?.classList.remove('hidden');
     document.querySelector('#hud .crosshair')?.remove(); // un seul viseur
     const mode = document.querySelector('#match-mode');
-    if (mode) mode.textContent = config.mode === 'time' ? 'MEILLEUR SCORE' : `PREMIER À ${config.target}`;
+    if (mode) mode.textContent = this.isFlag() ? 'CAPTURE DU DRAPEAU' : config.mode === 'time' ? 'MEILLEUR SCORE' : `PREMIER À ${config.target}`;
 
     this.hud.show();
     this.hud.clearMessage();
+    if (this.isFlag()) this.hud.message('Seul sur le drapeau au centre, tu captures. À plusieurs, plus personne ne progresse.');
     document.querySelector('#lock-hint')?.classList.remove('hidden');
     this.crosshair.style.display = 'block';
     this.active = true;
@@ -750,7 +773,7 @@ export class Game {
     const kp = this.posOf(killer);
     this.emit({ kind: 'kill', killer, victim, weapon, head, score: this.score.slice(), kx: kp.x, kz: kp.z });
 
-    if (this.config.mode === 'kills' && this.score[killer] >= this.config.target && !this.over) {
+    if (!this.isFlag() && this.config.mode === 'kills' && this.score[killer] >= this.config.target && !this.over) {
       this.over = true;
       this.endAt = performance.now() + 2800;
     }
@@ -770,6 +793,8 @@ export class Game {
       return;
     }
 
+    if (!this.over && this.isFlag()) this.flagTick(raw, now);
+
     if (!this.over) {
       for (const i of this.ids) {
         const pend = this.pending[i];
@@ -787,6 +812,16 @@ export class Game {
   verdict() {
     if (this.forfeit) {
       return { reason: 'Victoire par forfait', winner: this.ids[0] ?? this.me };
+    }
+    if (this.isFlag()) {
+      const best = Math.max(...this.ids.map(i => this.capture[i]));
+      const first = this.ids.filter(i => this.capture[i] === best);
+      if (best <= 0 || first.length > 1) return { reason: 'Égalité', winner: -1 };
+      const name = this.nameOf(first[0]);
+      return {
+        reason: best >= 100 ? `${name} a capturé le drapeau` : `Victoire de ${name} (${Math.floor(best)} % de capture)`,
+        winner: first[0]
+      };
     }
     const top = Math.max(...this.ids.map(i => this.score[i]));
     const leaders = this.ids.filter(i => this.score[i] === top);
@@ -1037,20 +1072,141 @@ export class Game {
     this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 60);
   }
 
+  // ============ MODE CAPTURE DU DRAPEAU ============
+
+  isFlag() { return this.config?.gameMode === 'flag'; }
+
+  inZone(p) {
+    return Math.hypot(p.x - FLAG.x, p.z - FLAG.z) <= FLAG.radius && (p.y || 0) < 2.5;
+  }
+
+  /**
+   * Hôte : seul un joueur vivant, SEUL dans la zone, progresse. À plusieurs, rien ne bouge pour personne.
+   * Chaque joueur garde son propre pourcentage : personne ne peut le vider.
+   */
+  flagTick(dt, now) {
+    const inside = this.ids.filter(i => !this.dead[i] && this.inZone(this.posOf(i)));
+    this.zone = inside.length === 1 ? inside[0] : inside.length ? -2 : -1;
+    if (this.zone < 0) return;
+    const id = this.zone;
+    this.capture[id] = Math.min(100, this.capture[id] + dt / FLAG.seconds * 100);
+    if (this.capture[id] >= 100) {
+      this.over = true;
+      this.endAt = now + 2000;
+    }
+  }
+
+  buildFlag() {
+    this.disposeFlag();
+    if (!this.isFlag()) return;
+
+    const group = new THREE.Group();
+    group.position.set(FLAG.x, 0, FLAG.z);
+
+    const zoneMat = () => new THREE.MeshBasicMaterial({ color: 0xcfc9b8, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(FLAG.radius - 0.15, FLAG.radius, 64), zoneMat());
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(FLAG.radius - 0.15, 64), zoneMat());
+    for (const m of [ring, disc]) { m.rotation.x = -Math.PI / 2; group.add(m); }
+    ring.position.y = 0.035;
+    disc.position.y = 0.03;
+    disc.material.opacity = 0.1;
+
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06, 0.06, 4.2, 8),
+      new THREE.MeshStandardMaterial({ color: 0xb8c0c6, metalness: 0.7, roughness: 0.35 })
+    );
+    pole.position.y = 2.1;
+    group.add(pole);
+
+    const clothGeo = new THREE.PlaneGeometry(1.5, 0.9);
+    clothGeo.translate(0.75, 0, 0); // pivot sur le mât
+    const cloth = new THREE.Mesh(clothGeo, new THREE.MeshBasicMaterial({ color: 0xcfc9b8, side: THREE.DoubleSide }));
+    cloth.position.set(0.06, 0.7, 0);
+    group.add(cloth);
+
+    this.scene.add(group);
+    this.flagObj = { group, ring, disc, cloth, t: 0, k: 0 };
+  }
+
+  disposeFlag() {
+    if (!this.flagObj) return;
+    this.scene.remove(this.flagObj.group);
+    this.flagObj.group.traverse(o => {
+      o.geometry?.dispose();
+      o.material?.dispose();
+    });
+    this.flagObj = null;
+  }
+
+  /** Animation du drapeau : il monte avec le pourcentage du joueur qui capture (ou du meilleur). */
+  updateFlag(dt) {
+    const f = this.flagObj;
+    if (!f) return;
+    f.t += dt;
+
+    let focus = this.zone >= 0 ? this.zone : -1;
+    if (focus < 0) {
+      let best = 0;
+      for (const i of this.ids) if (this.capture[i] > best) { best = this.capture[i]; focus = i; }
+    }
+
+    f.k = lerp(f.k, focus >= 0 ? this.capture[focus] / 100 : 0, Math.min(1, dt * 6));
+    f.cloth.position.y = 0.7 + f.k * 2.9;
+    f.cloth.rotation.y = Math.sin(f.t * 3) * 0.18;
+    f.cloth.material.color.set(focus >= 0 ? shirtOf(focus) : 0xcfc9b8);
+
+    let ringColor = 0xcfc9b8, ringOpacity = 0.45;
+    if (this.zone === -2) { ringColor = 0xff3b30; ringOpacity = 0.55 + Math.sin(f.t * 8) * 0.2; }
+    else if (this.zone >= 0) { ringColor = shirtOf(this.zone); ringOpacity = 0.8; }
+    f.ring.material.color.set(ringColor);
+    f.ring.material.opacity = ringOpacity;
+    f.disc.material.color.set(ringColor);
+  }
+
+  updateFlagHUD() {
+    const el = this.flagEl;
+    if (!el) return;
+    const flag = this.isFlag();
+    el.style.display = flag ? 'block' : 'none';
+    if (!flag) return;
+
+    const z = this.zone, me = this.me;
+    let text = 'REJOINS LE DRAPEAU AU CENTRE';
+    if (z === me) text = 'TU CAPTURES LE DRAPEAU';
+    else if (z >= 0) text = `${this.nameOf(z).toUpperCase()} CAPTURE LE DRAPEAU`;
+    else if (z === -2) text = 'ZONE CONTESTÉE · PROGRESSION BLOQUÉE';
+
+    let lead = -1;
+    for (const i of this.ids) {
+      if (i !== me && (lead < 0 || this.capture[i] > this.capture[lead])) lead = i;
+    }
+
+    el.classList.toggle('mine', z === me);
+    el.classList.toggle('contested', z === -2);
+    el.querySelector('.fh-status').textContent = text;
+    el.querySelector('.fh-bar i').style.width = `${this.capture[me]}%`;
+    el.querySelector('.fh-me').textContent = `TOI · ${Math.floor(this.capture[me])} %`;
+    el.querySelector('.fh-lead').textContent = lead >= 0 ? `${this.nameOf(lead).toUpperCase()} · ${Math.floor(this.capture[lead])} %` : '';
+  }
+
   // ============ HUD / FIN ============
 
   updateHUD() {
     const w = this.weapon.stats();
     // À droite du HUD : le meilleur adversaire du moment.
+    const flag = this.isFlag();
+    const metric = i => flag ? this.capture[i] : this.score[i];
+    const show = i => flag ? `${Math.floor(this.capture[i])}%` : this.score[i];
     let best = null;
     for (const i of this.ids) {
       if (i === this.me) continue;
-      if (best === null || this.score[i] > this.score[best]) best = i;
+      if (best === null || metric(i) > metric(best)) best = i;
     }
+    this.updateFlagHUD();
     this.hud.update({
       health: this.hp[this.me],
-      youScore: this.score[this.me],
-      enemyScore: best === null ? 0 : this.score[best],
+      youScore: show(this.me),
+      enemyScore: best === null ? 0 : show(best),
       time: this.clockValue,
       weapon: { label: w.label + (this.weapon.isReloading() ? ' · RECHARGE…' : '') },
       ammo: this.weapon.getAmmo(),
@@ -1062,7 +1218,7 @@ export class Game {
   end(v) {
     this.active = false;
     this.controller.enabled = false;
-    this.network.send(MSG.GAMEOVER, { reason: v.reason, winner: v.winner, score: this.score, stats: this.stats });
+    this.network.send(MSG.GAMEOVER, { reason: v.reason, winner: v.winner, score: this.score, stats: this.stats, cap: this.capture });
     this.finish(v.reason, '', v.winner);
   }
 
@@ -1095,9 +1251,11 @@ export class Game {
   showScoreboard(final = false, reason = '', title = '', winner = -1) {
     const me = this.me;
     const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    const order = this.roster.slice().sort((a, b) => this.score[b] - this.score[a] || this.stats[a].d - this.stats[b].d);
-    const top = order.length ? this.score[order[0]] : 0;
-    const uniqueTop = order.filter(i => this.score[i] === top).length === 1;
+    const flag = this.isFlag();
+    const metric = i => flag ? this.capture[i] : this.score[i];
+    const order = this.roster.slice().sort((a, b) => metric(b) - metric(a) || this.score[b] - this.score[a] || this.stats[a].d - this.stats[b].d);
+    const top = order.length ? metric(order[0]) : 0;
+    const uniqueTop = order.filter(i => metric(i) === top).length === 1;
 
     let label = 'SCOREBOARD', cls = 'info';
     if (final) {
@@ -1112,14 +1270,15 @@ export class Game {
       const classes = [i === me ? 'me' : '', r === 0 && uniqueTop ? 'top' : '', this.gone.has(i) ? 'gone' : ''].join(' ').trim();
       return `<tr class="${classes}"><td>${r + 1}</td>` +
         `<td>${esc(this.nameOf(i))}${i === 0 ? '<em>HÔTE</em>' : ''}${this.gone.has(i) ? '<em class="gone">PARTI</em>' : ''}</td>` +
+        (flag ? `<td>${Math.floor(this.capture[i])}%</td>` : '') +
         `<td>${k}</td><td>${d}</td><td>${(d ? k / d : k).toFixed(2)}</td><td>${this.stats[i].h}</td></tr>`;
     }).join('');
 
-    const mode = this.config?.mode === 'time' ? 'MEILLEUR SCORE AU TEMPS' : `PREMIER À ${this.config?.target}`;
+    const mode = flag ? 'CAPTURE DU DRAPEAU' : this.config?.mode === 'time' ? 'MEILLEUR SCORE AU TEMPS' : `PREMIER À ${this.config?.target}`;
     this.sbEl.innerHTML = `<div class="sb-panel${order.length > 8 ? ' compact' : ''}">
       <div class="sb-title ${cls}">${esc(label)}</div>
       <div class="sb-sub">${esc(final ? reason : mode)}</div>
-      <div class="sb-scroll"><table><thead><tr><th>#</th><th>JOUEUR</th><th>ÉLIMS</th><th>MORTS</th><th>K/D</th><th>TÊTES</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="sb-scroll"><table><thead><tr><th>#</th><th>JOUEUR</th>${flag ? '<th>DRAPEAU</th>' : ''}<th>ÉLIMS</th><th>MORTS</th><th>K/D</th><th>TÊTES</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${final ? `<div id="sb-replay-status" class="sb-hint"></div>
         <div class="sb-actions">
           <div class="sb-replay-actions">
@@ -1263,7 +1422,10 @@ export class Game {
             pos[id] = encode(id === this.me ? this.snap() : (this.remotes.get(id)?.n ?? { x: 0, z: 0 }));
           }
           this.network.send(MSG.STATE, {
-            state: { hp: this.hp, score: this.score, dead: this.dead, time: this.clockValue, pos }
+            state: {
+              hp: this.hp, score: this.score, dead: this.dead, time: this.clockValue, pos,
+              ...(this.isFlag() ? { cap: this.capture.map(v => Math.round(v * 10) / 10), zone: this.zone } : {})
+            }
           });
         } else {
           this.network.send(MSG.INPUT, { input: encode(this.snap()) });
@@ -1271,6 +1433,7 @@ export class Game {
       }
 
       this.updateRemotes(dt);
+      this.updateFlag(dt);
       this.updateWeaponAnimation(dt);
       this.updateFx(dt);
       if (this.sbHeld && !this.finalShown) this.showScoreboard(false);

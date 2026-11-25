@@ -203,6 +203,20 @@ const CSS = `
   color: #8a98a0;
   min-height: 1.5em;
 }
+.rail-map {
+  color: #eef1f2;
+  font: 700 14px 'Barlow Condensed', Arial, sans-serif;
+  letter-spacing: .08em;
+}
+.rail-map-description {
+  color: #8a98a0;
+  font: 500 10px/1.5 Inter, Arial, sans-serif;
+}
+.map-description {
+  color: #8a98a0;
+  font: 500 10px/1.5 Inter, Arial, sans-serif;
+  letter-spacing: 0;
+}
 .rail-footer { margin-top: auto; }
 .rail-footer #leave-lobby { width: 100%; }
 
@@ -350,6 +364,11 @@ export class Roster {
         <div class="rail-label">CODE DU SALON</div>
         <div class="rail-code"></div>
       </div>
+      <div class="rail-section">
+        <div class="rail-label">CARTE SÉLECTIONNÉE</div>
+        <div id="lobby-map" class="rail-map">Fonderie</div>
+        <div id="lobby-map-description" class="rail-map-description"></div>
+      </div>
       <div class="rail-section rail-status"></div>
       <div class="rail-section rail-footer"></div>`;
     lobby.appendChild(this.left);
@@ -448,6 +467,13 @@ export class Roster {
       this.right?.classList.toggle('hidden', !isHost);
     }
     this.sync();
+  }
+
+  setMap(map) {
+    const name = this.left?.querySelector('#lobby-map');
+    const description = this.left?.querySelector('#lobby-map-description');
+    if (name) name.textContent = map.name;
+    if (description) description.textContent = map.description;
   }
 
   sync() {

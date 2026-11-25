@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { APPEARANCE_OPTIONS, normalizeAppearance } from './customization.js';
+import { editorAssets } from './editor-assets.js';
 
 /** Couleurs de maillot : une par id réseau (même couleur dans le lobby et en jeu). */
 export const SHIRT_COLORS = [
@@ -9,6 +10,7 @@ export const SHIRT_COLORS = [
 
 export const box = (parent, [w, h, d], mat, x, y, z) => {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.name = `mesh-${parent.children.length}`;
   m.position.set(x, y, z);
   parent.add(m);
   return m;
@@ -90,32 +92,46 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
     const hex = APPEARANCE_OPTIONS[category].find(option => option.id === look[category]).color;
     return Number.parseInt(hex.slice(1), 16);
   };
-  const M = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
-  const skin = M(color('skin', 0xe0ae88)), shirtM = M(color('shirt', shirt)),
-    pants = M(color('pants', 0x26374e)), shoes = M(color('shoes', 0x171b22)),
+  const M = (c, appearanceCategory = null) => {
+    const material = new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
+    if (appearanceCategory) material.userData.appearanceCategory = appearanceCategory;
+    return material;
+  };
+  const skin = M(color('skin', 0xe0ae88), 'skin'), shirtM = M(color('shirt', shirt), 'shirt'),
+    pants = M(color('pants', 0x26374e), 'pants'), shoes = M(color('shoes', 0x171b22), 'shoes'),
     dark = M(0x252b32);
   const g = new THREE.Group();
+  g.name = 'agent';
   g.rotation.order = 'YXZ';
   const head = new THREE.Group();
+  head.name = 'head';
   head.position.y = 1.5;
   const headModel = new THREE.Group();
+  headModel.name = 'head-model';
   headModel.position.y = -1.5;
   head.add(headModel);
   g.add(head);
 
-  box(g, [0.62, 0.72, 0.34], shirtM, 0, 1.12, 0);
+  const torso = new THREE.Group();
+  torso.name = 'torso';
+  g.add(torso);
+  box(torso, [0.62, 0.72, 0.34], shirtM, 0, 1.12, 0);
   // --- TÊTE ---
   box(headModel, [0.43, 0.43, 0.43], skin, 0, 1.72, 0);
 
   // Cheveux : volume principal
-  const hair = M(color('hairColor', 0x493326));
+  const hair = M(color('hairColor', 0x493326), 'hairColor');
+  const hairGroup = new THREE.Group();
+  hairGroup.name = 'hair';
+  headModel.add(hairGroup);
   const hairStyle = look?.hairStyle ?? 'classic';
-  const hairBox = (size, x, y, z) => box(headModel, size, hair, x, y, z);
+  const hairBox = (size, x, y, z) => box(hairGroup, size, hair, x, y, z);
   const hairBall = (x, y, z, scale) => {
     const curl = new THREE.Mesh(new THREE.IcosahedronGeometry(0.1, 0), hair);
+    curl.name = `curl-${hairGroup.children.length}`;
     curl.position.set(x, y, z);
     curl.scale.set(...scale);
-    headModel.add(curl);
+    hairGroup.add(curl);
   };
   const crown = (height = 0.15, y = 1.96, width = 0.47) =>
     hairBox([width, height, 0.47], 0, y, 0);
@@ -129,9 +145,10 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
       const x = (i - (count - 1) / 2) * 0.085;
       const spikeHeight = height * (i % 2 === 0 ? 1 : 0.76);
       const spike = new THREE.Mesh(new THREE.ConeGeometry(width, spikeHeight, 5), hair);
+      spike.name = `spike-${hairGroup.children.length}`;
       spike.position.set(x, 2.04 + spikeHeight * 0.18, 0);
       spike.rotation.z = (i - (count - 1) / 2) * 0.15;
-      headModel.add(spike);
+      hairGroup.add(spike);
     }
   };
 
@@ -209,6 +226,7 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
 
   // --- VISAGE ---
   const face = new THREE.Group();
+  face.name = 'face';
   face.position.set(0, -0.02, -0.025);
   headModel.add(face);
 
@@ -243,23 +261,27 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
   box(face, [0.105, 0.025, 0.025], mouth,
     0, 1.61, -0.225);
 
+  const accessory = new THREE.Group();
+  accessory.name = 'accessory';
+  headModel.add(accessory);
   if (look?.accessory === 'cap') {
     const cap = M(0xd1d2cb);
-    box(headModel, [0.49, 0.1, 0.48], cap, 0, 2.015, 0);
-    box(headModel, [0.48, 0.035, 0.22], cap, 0, 1.965, -0.2);
+    box(accessory, [0.49, 0.1, 0.48], cap, 0, 2.015, 0);
+    box(accessory, [0.48, 0.035, 0.22], cap, 0, 1.965, -0.2);
   } else if (look?.accessory === 'headband') {
-    box(headModel, [0.47, 0.065, 0.48], M(0xf07845), 0, 1.86, 0);
-    box(headModel, [0.44, 0.07, 0.025], M(0xf07845), 0, 1.86, -0.23);
+    box(accessory, [0.47, 0.065, 0.48], M(0xf07845), 0, 1.86, 0);
+    box(accessory, [0.44, 0.07, 0.025], M(0xf07845), 0, 1.86, -0.23);
   } else if (look?.accessory === 'glasses') {
     const frame = M(0x252b32);
-    box(face, [0.17, 0.1, 0.035], frame, -0.105, 1.76, -0.245);
-    box(face, [0.17, 0.1, 0.035], frame, 0.105, 1.76, -0.245);
-    box(face, [0.08, 0.03, 0.03], frame, 0, 1.78, -0.25);
+    box(accessory, [0.17, 0.1, 0.035], frame, -0.105, 1.76, -0.245);
+    box(accessory, [0.17, 0.1, 0.035], frame, 0.105, 1.76, -0.245);
+    box(accessory, [0.08, 0.03, 0.03], frame, 0, 1.78, -0.25);
   }
 
   const arms = [], legs = [];
   [-1, 1].forEach(s => {
     const a = new THREE.Group();
+    a.name = s < 0 ? 'arm-left' : 'arm-right';
     a.position.set(s * 0.39, 1.38, 0);
     g.add(a);
     box(a, [0.23, 0.66, 0.25], shirtM, 0, -0.32, 0);
@@ -271,6 +293,7 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
 
     // Les semelles touchent exactement y = 0.
     const l = new THREE.Group();
+    l.name = s < 0 ? 'leg-left' : 'leg-right';
     l.position.set(s * 0.16, 0.78, 0);
     g.add(l);
     box(l, [0.25, 0.68, 0.29], pants, 0, -0.34, 0);
@@ -279,13 +302,13 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
   });
   if (look?.shirtStyle === 'stripes') {
     const stripe = M(0xe7d4be);
-    box(g, [0.045, 0.58, 0.018], stripe, -0.12, 1.12, -0.176);
-    box(g, [0.045, 0.58, 0.018], stripe, 0.12, 1.12, -0.176);
+    box(torso, [0.045, 0.58, 0.018], stripe, -0.12, 1.12, -0.176);
+    box(torso, [0.045, 0.58, 0.018], stripe, 0.12, 1.12, -0.176);
   } else if (look?.shirtStyle === 'jacket') {
     const trim = M(0x202a32);
-    box(g, [0.09, 0.69, 0.02], trim, -0.22, 1.12, -0.17);
-    box(g, [0.09, 0.69, 0.02], trim, 0.22, 1.12, -0.17);
-    box(g, [0.025, 0.58, 0.018], M(0xd8d5ca), 0, 1.12, -0.182);
+    box(torso, [0.09, 0.69, 0.02], trim, -0.22, 1.12, -0.17);
+    box(torso, [0.09, 0.69, 0.02], trim, 0.22, 1.12, -0.17);
+    box(torso, [0.025, 0.58, 0.018], M(0xd8d5ca), 0, 1.12, -0.182);
   }
 
   const guns = {};
@@ -308,7 +331,49 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
     guns[t] = m;
   }
 
+  for (const part of editorAssets.character.additions || []) {
+    const geometries = {
+      box: () => new THREE.BoxGeometry(1, 1, 1),
+      sphere: () => new THREE.SphereGeometry(0.5, 16, 12),
+      cylinder: () => new THREE.CylinderGeometry(0.5, 0.5, 1, 12),
+      cone: () => new THREE.ConeGeometry(0.5, 1, 12)
+    };
+    const geometry = geometries[part.geometry]?.();
+    if (!geometry) continue;
+    const mesh = new THREE.Mesh(geometry, M(Number.parseInt(part.color.slice(1), 16)));
+    mesh.name = part.name;
+    mesh.userData.editorId = `custom:${part.id}`;
+    mesh.userData.editorCustomId = part.id;
+    mesh.position.fromArray(part.position);
+    mesh.rotation.fromArray([...part.rotation, 'XYZ']);
+    mesh.scale.fromArray(part.scale);
+    g.add(mesh);
+  }
+
+  const transforms = editorAssets.character.transforms || {};
+  g.traverse(object => {
+    if (object === g || object.userData.editorCustomId) return;
+    const parts = [];
+    for (let node = object; node && node !== g; node = node.parent) {
+      parts.unshift(node.name || `part-${node.parent.children.indexOf(node)}`);
+    }
+    object.userData.editorId = parts.join('/');
+    const saved = transforms[object.userData.editorId];
+    if (!saved) return;
+    if (saved.position) object.position.fromArray(saved.position);
+    if (saved.rotation) object.rotation.fromArray([...saved.rotation, 'XYZ']);
+    if (saved.scale) object.scale.fromArray(saved.scale);
+    if (saved.color && object.material?.color && !object.material.userData.appearanceCategory) {
+      object.material.color.set(saved.color);
+    }
+  });
+
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  const editorBase = {
+    head: head.rotation.clone(),
+    arms: arms.map(arm => arm.rotation.clone()),
+    legs: legs.map(leg => leg.rotation.clone())
+  };
 
   let sprite = null;
   if (label) { sprite = makeLabel(label); g.add(sprite); }
@@ -320,6 +385,7 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
     head,
     guns,
     label: sprite,
+    editorBase,
     motion: { time: 0, phase: 0, run: 0, aim: 0 }
   };
 }
@@ -330,6 +396,7 @@ export function showGun(ch, type) {
 
 /** Animation de locomotion et de visée pour les personnages visibles à la troisième personne. */
 export function animateCharacter(ch, dt, { speed = 0, aiming = false, pitch = 0, crouched = false } = {}) {
+  const base = ch.editorBase;
   const motion = ch.motion;
   const blend = 1 - Math.exp(-Math.min(dt, 0.05) * 10);
   const targetRun = THREE.MathUtils.clamp((speed - 0.35) / 4.5, 0, 1);
@@ -343,30 +410,31 @@ export function animateCharacter(ch, dt, { speed = 0, aiming = false, pitch = 0,
   const step = Math.sin(motion.phase);
   const stride = crouched ? 0.62 : 1;
   const aimPitch = THREE.MathUtils.clamp(pitch, -1.1, 1.1) * 0.42;
-  ch.head.rotation.x = THREE.MathUtils.clamp(pitch, -0.8, 0.8) * 0.65;
-  const leftArmAim = 1.12 + aimPitch;
-  const rightArmAim = 1.48 + aimPitch;
+  ch.head.rotation.x = (base?.head.x || 0) + THREE.MathUtils.clamp(pitch, -0.8, 0.8) * 0.65;
+  const leftArmAim = (base?.arms[0].x || 0) + 1.12 + aimPitch;
+  const rightArmAim = (base?.arms[1].x || 0) + 1.48 + aimPitch;
   const breathing = Math.sin(motion.time * 2.1) * (1 - run) * 0.025;
 
   ch.arms[0].rotation.x =
-    THREE.MathUtils.lerp(0.06 + breathing + Math.sin(motion.phase + Math.PI) * 0.78 * run * stride, leftArmAim, aim);
+    THREE.MathUtils.lerp((base?.arms[0].x || 0) + 0.06 + breathing + Math.sin(motion.phase + Math.PI) * 0.78 * run * stride, leftArmAim, aim);
   ch.arms[1].rotation.x =
-    THREE.MathUtils.lerp(0.72 + breathing + step * 0.32 * run * stride, rightArmAim, aim);
-  ch.arms[0].rotation.z = THREE.MathUtils.lerp(0, 0.28, aim);
-  ch.arms[1].rotation.z = THREE.MathUtils.lerp(0, -0.12, aim);
+    THREE.MathUtils.lerp((base?.arms[1].x || 0) + 0.72 + breathing + step * 0.32 * run * stride, rightArmAim, aim);
+  ch.arms[0].rotation.z = (base?.arms[0].z || 0) + THREE.MathUtils.lerp(0, 0.28, aim);
+  ch.arms[1].rotation.z = (base?.arms[1].z || 0) + THREE.MathUtils.lerp(0, -0.12, aim);
 
-  ch.legs[0].rotation.x = step * 0.62 * run * stride;
-  ch.legs[1].rotation.x = -step * 0.62 * run * stride;
+  ch.legs[0].rotation.x = (base?.legs[0].x || 0) + step * 0.62 * run * stride;
+  ch.legs[1].rotation.x = (base?.legs[1].x || 0) - step * 0.62 * run * stride;
 }
 
 /** Pose d'attente (lobby) : respiration + léger balancement. */
 export function poseIdle(ch, t, phase = 0) {
-  ch.arms[0].rotation.x = 0.12 + Math.sin(t * 1.3 + phase) * 0.04;
-  ch.arms[1].rotation.x = 0.72 + Math.sin(t * 1.6 + phase) * 0.035;
-  ch.arms[0].rotation.z = 0;
-  ch.arms[1].rotation.z = 0;
-  ch.legs[0].rotation.x = 0;
-  ch.legs[1].rotation.x = 0;
+  const base = ch.editorBase;
+  ch.arms[0].rotation.x = (base?.arms[0].x || 0) + 0.12 + Math.sin(t * 1.3 + phase) * 0.04;
+  ch.arms[1].rotation.x = (base?.arms[1].x || 0) + 0.72 + Math.sin(t * 1.6 + phase) * 0.035;
+  ch.arms[0].rotation.z = base?.arms[0].z || 0;
+  ch.arms[1].rotation.z = base?.arms[1].z || 0;
+  ch.legs[0].rotation.x = base?.legs[0].x || 0;
+  ch.legs[1].rotation.x = base?.legs[1].x || 0;
   return 1 + Math.sin(t * 1.8 + phase) * 0.006;
 }
 
