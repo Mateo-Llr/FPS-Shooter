@@ -1,4 +1,6 @@
 
+import { settings } from "../ui/settings.js";
+
 export const PLAYER_RADIUS = 0.42;
 export const PLAYER_HEIGHT = 1.75;
 
@@ -71,7 +73,7 @@ export class PlayerController {
         return;
       }
 
-      const sens = this.camera.fov / 75; // sensibilité réduite quand on zoome
+      const sens = (this.camera.fov / 75) * settings.data.sens; // réduite quand on zoome
       this.yaw -= e.movementX * 0.0022 * sens;
 
       this.pitch = clamp(
@@ -143,13 +145,10 @@ export class PlayerController {
     // Limite les gros déplacements en cas de ralentissement.
     dt = Math.min(dt, 0.05);
 
-    this.crouched =
-      !!this.keys.ControlLeft ||
-      !!this.keys.ControlRight;
+    const bind = settings.data.keys;
 
-    this.sprinting =
-      !!this.keys.ShiftLeft ||
-      !!this.keys.ShiftRight;
+    this.crouched = !!this.keys[bind.crouch];
+    this.sprinting = !!this.keys[bind.sprint];
 
     const speed = this.crouched
       ? 3
@@ -158,22 +157,19 @@ export class PlayerController {
         : 5.2;
 
     /*
-     * Commandes :
-     * Z / W : avancer
-     * S     : reculer
-     * Q / A : aller à gauche
-     * D     : aller à droite
+     * Commandes : configurables dans Paramètres > Contrôles
+     * (par défaut : touches W/A/S/D par position physique, donc ZQSD en AZERTY).
      *
      * La direction est calculée à partir de la caméra.
      * Cela corrige notamment l'inversion avant/arrière.
      */
     const forward =
-      (this.keys.KeyZ || this.keys.KeyW ? 1 : 0) -
-      (this.keys.KeyS ? 1 : 0);
+      (this.keys[bind.forward] ? 1 : 0) -
+      (this.keys[bind.back] ? 1 : 0);
 
     const side =
-      (this.keys.KeyD ? 1 : 0) -
-      (this.keys.KeyQ || this.keys.KeyA ? 1 : 0);
+      (this.keys[bind.right] ? 1 : 0) -
+      (this.keys[bind.left] ? 1 : 0);
 
     // Normalisation pour éviter d'aller plus vite en diagonale.
     const length = Math.hypot(forward, side) || 1;
@@ -196,7 +192,7 @@ export class PlayerController {
     this.world.resolve(this.position);
 
     // Saut et gravité.
-    if (this.keys.Space && this.grounded) {
+    if (this.keys[bind.jump] && this.grounded) {
       this.velocityY = 7.2; // permet de monter sur les bidons et caisses
       this.grounded = false;
     }
