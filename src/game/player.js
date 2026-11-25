@@ -27,6 +27,7 @@ export class PlayerController {
     this.lastShot = 0;
     this.weapon = "rifle";
 
+    this.firing = false;
     this.bind();
   }
 
@@ -83,11 +84,17 @@ export class PlayerController {
         this.enabled &&
         document.pointerLockElement === this.canvas
       ) {
+        this.firing = true;
         this.tryShoot();
       }
     });
 
+    document.addEventListener("mouseup", (e) => {
+      if (e.button === 0) this.firing = false;
+    });
+
     document.addEventListener("pointerlockchange", () => {
+      this.firing = false;
       if (document.pointerLockElement !== this.canvas) {
         this.keys = {};
       }
@@ -119,6 +126,9 @@ export class PlayerController {
 
   update(dt) {
     if (!this.enabled) return;
+
+    // Tir automatique du fusil d'assaut (clic maintenu).
+    if (this.firing && this.weapon === "rifle") this.tryShoot();
 
     // Limite les gros déplacements en cas de ralentissement.
     dt = Math.min(dt, 0.05);
