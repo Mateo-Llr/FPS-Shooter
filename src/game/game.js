@@ -81,6 +81,10 @@ radial-gradient(circle at center,transparent 0,transparent 31vmin,#000 31.3vmin)
 .sb-panel em{font:800 10px Inter,Arial,sans-serif;letter-spacing:.14em;background:#f07845;color:#10151a;padding:2px 6px;margin-left:8px;font-style:normal}
 .sb-hint{margin-top:16px;font:600 11px Inter,Arial,sans-serif;letter-spacing:.16em;color:#7d8b92}
 #sb-menu{margin-top:24px;width:100%}
+.sb-actions{display:flex;gap:10px;margin-top:22px}
+.sb-actions>button,.sb-replay-actions button{flex:1;min-width:0}
+.sb-replay-actions{display:flex;flex:1;gap:10px}
+.sb-actions #sb-menu{width:auto;margin-top:0}
 .sb-scroll{max-height:56vh;overflow-y:auto}
 .sb-panel.compact td{padding:5px 10px;font-size:16px}
 .sb-panel.compact .sb-title{font-size:44px}
@@ -128,6 +132,7 @@ export class Game {
     this.over = false;
     this.forfeit = false;
     this.endAt = 0;
+    this.replayVotes = new Set();
 
     this.fx = [];
     this.death = null;
@@ -398,6 +403,7 @@ export class Game {
     this.over = false;
     this.forfeit = false;
     this.endAt = 0;
+    this.replayVotes.clear();
     this.finalShown = false;
     this.hideScoreboard();
     this.death = null;
@@ -1026,6 +1032,7 @@ export class Game {
     this.hud.clearMessage();
     this.finalShown = true;
     this.showScoreboard(true, reason, title, winner);
+    if (this.onFinish?.() === false) this.updateReplayState([], false);
   }
 
   // ============ SCOREBOARD ============
@@ -1058,14 +1065,48 @@ export class Game {
       <div class="sb-title ${cls}">${esc(label)}</div>
       <div class="sb-sub">${esc(final ? reason : mode)}</div>
       <div class="sb-scroll"><table><thead><tr><th>#</th><th>JOUEUR</th><th>ÉLIMS</th><th>MORTS</th><th>K/D</th><th>TÊTES</th></tr></thead><tbody>${rows}</tbody></table></div>
-      ${final ? '<button id="sb-menu" class="primary">RETOUR AU MENU PRINCIPAL</button>' : '<div class="sb-hint">RELÂCHE TAB POUR FERMER</div>'}
+      ${final ? `<div id="sb-replay-status" class="sb-hint"></div>
+        <div class="sb-actions">
+          <div class="sb-replay-actions">
+            <button id="sb-replay" class="primary">REJOUER</button>
+            ${this.network.isHost ? '<button id="sb-confirm" class="primary" hidden>VALIDER</button>' : ''}
+            <button id="sb-cancel" hidden>ANNULER</button>
+          </div>
+          <button id="sb-menu">RETOUR AU MENU PRINCIPAL</button>
+        </div>` : '<div class="sb-hint">RELÂCHE TAB POUR FERMER</div>'}
     </div>`;
     this.sbEl.classList.toggle('final', final);
     this.sbEl.classList.add('show');
     if (final) {
-      // Repart sur un menu propre : ferme la connexion (beforeunload) et recharge l'application.
+      this.sbEl.querySelector('#sb-replay').onclick = () => this.onReplayVote?.();
+      this.sbEl.querySelector('#sb-cancel').onclick = () => this.onReplayVote?.();
       this.sbEl.querySelector('#sb-menu').onclick = () => location.reload();
+      this.updateReplayState([...this.replayVotes]);
     }
+  }
+
+  updateReplayState(votes, available = true) {
+    this.replayVotes = new Set(votes);
+    const replay = this.sbEl.querySelector('#sb-replay');
+    const confirm = this.sbEl.querySelector('#sb-confirm');
+    const status = this.sbEl.querySelector('#sb-replay-status');
+    if (!replay || !status) return;
+
+    const hasVoted = this.replayVotes.has(this.me);
+    replay.hidden = !available || hasVoted;
+    const cancel = this.sbEl.querySelector('#sb-cancel');
+    if (cancel) cancel.hidden = !available || !hasVoted;
+    const guestReady = [...this.replayVotes].some(id => id !== 0);
+    if (confirm) {
+      confirm.hidden = !available || !hasVoted;
+      confirm.disabled = !guestReady;
+      confirm.onclick = () => this.onReplayConfirm?.();
+    }
+    status.textContent = !available
+      ? 'La reconnexion au salon est nécessaire pour rejouer.'
+      : this.network.isHost && !guestReady
+        ? 'Clique sur REJOUER, puis attends qu’un autre joueur soit prêt.'
+        : `${this.replayVotes.size} joueur${this.replayVotes.size > 1 ? 's' : ''} prêt${this.replayVotes.size > 1 ? 's' : ''} à rejouer.`;
   }
 
   hideScoreboard() {

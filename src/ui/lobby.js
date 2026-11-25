@@ -1,6 +1,23 @@
 import { MSG, MAX_PLAYERS } from '../network/protocol.js';
 
 const $ = s => document.querySelector(s);
+const NICKNAME_KEY = 'clash.nickname';
+
+const getStoredNickname = () => {
+  try {
+    return (localStorage.getItem(NICKNAME_KEY) || '').trim().slice(0, 16);
+  } catch {
+    return '';
+  }
+};
+
+const storeNickname = nickname => {
+  try {
+    localStorage.setItem(NICKNAME_KEY, nickname);
+  } catch {
+    // Le pseudo reste utilisable même si le stockage est indisponible.
+  }
+};
 
 /** Salon : 2 à 16 joueurs. L'hôte (id 0) tient la liste et la diffuse. */
 export class Lobby {
@@ -12,10 +29,23 @@ export class Lobby {
     this.players = [];   // [{ id, name }] — id réseau (0 = hôte)
     this.me = 0;
     this.started = false;
+    this.postGame = false;
+    this.replayVotes = new Set();
+    this.game.onFinish = () => this.onGameFinished();
+    this.game.onReplayVote = () => this.toggleReplayVote();
+    this.game.onReplayConfirm = () => this.confirmReplay();
   }
 
   init() {
     const n = this.network;
+    const nicknameInput = $('#nickname');
+    const savedNickname = getStoredNickname();
+    if (savedNickname) nicknameInput.value = savedNickname;
+    nicknameInput.addEventListener('input', () => {
+      const nickname = nicknameInput.value.trim().slice(0, 16);
+      if (nickname) storeNickname(nickname);
+    });
+    nicknameInput.addEventListener('change', () => this.nickname());
     $('#create-room').onclick = () => this.create();
     $('#join-room').onclick = () => this.join();
     $('#room-code').addEventListener('keydown', e => { if (e.key === 'Enter') this.join(); });
@@ -28,7 +58,18 @@ export class Lobby {
     n.on(MSG.HELLO, d => this.onHello(d));
     n.on(MSG.ROSTER, d => this.onRoster(d));
     n.on(MSG.START, d => this.begin(d.config, d.you, d.names));
-    n.on('peer-left', d => { if (!this.started && n.isHost) { this.players = this.players.filter(p => p.id !== d.id); this.publish(); } });
+    n.on(MSG.REPLAY, d => this.onReplay(d));
+    n.on('peer-left', d => {
+      if (!n.isHost) return;
+      if (this.postGame) {
+        this.players = this.players.filter(p => p.id !== d.id);
+        this.replayVotes.delete(d.id);
+        this.broadcastReplayState();
+      } else if (!this.started) {
+        this.players = this.players.filter(p => p.id !== d.id);
+        this.publish();
+      }
+    });
     n.on('disconnected', () => { if (!this.started && !n.isHost) this.leave('Connexion avec l’hôte perdue.'); });
     n.on('error', m => this.status(m));
   }
@@ -51,7 +92,11 @@ export class Lobby {
     this.join();
   }
 
-  nickname() { return ($('#nickname').value || '').trim().slice(0, 16) || 'Joueur'; }
+  nickname() {
+    const nickname = ($('#nickname').value || '').trim().slice(0, 16);
+    if (nickname) storeNickname(nickname);
+    return nickname || 'Joueur';
+  }
 
   status(text, el = '#lobby-status') {
     const e = $(el); if (e) e.textContent = text;
@@ -144,25 +189,91 @@ export class Lobby {
       duration: +$('#duration').value,
       weapon: $('#weapon-rule').value
     };
+    this.launchGame(config, this.players);
+  }
+
+  launchGame(config, players) {
     // Les ids réseau peuvent avoir des trous (joueur parti) : names[id] = null pour les absents.
     const names = [];
-    for (const p of this.players) names[p.id] = p.name;
+    for (const p of players) names[p.id] = p.name;
     for (let i = 0; i < names.length; i++) names[i] ??= null;
     this.network.locked = true;
-    for (const p of this.players) if (p.id !== 0) this.network.sendTo(p.id, MSG.START, { config, names, you: p.id });
+    for (const p of players) if (p.id !== 0) this.network.sendTo(p.id, MSG.START, { config, names, you: p.id });
     this.begin(config, 0, names);
   }
 
   begin(config, you, names) {
+    this.postGame = false;
+    this.replayVotes.clear();
     this.started = true;
     this.friends?.push();
     this.game.start(config, you, names);
+  }
+
+  onGameFinished() {
+    if (!this.inRoom || !this.started || !this.network.connected) return false;
+    this.started = false;
+    this.postGame = true;
+    this.players = this.players.filter(p => this.game.ids.includes(p.id));
+    this.replayVotes.clear();
+    this.broadcastReplayState();
+    this.friends?.push();
+    return true;
+  }
+
+  toggleReplayVote() {
+    if (!this.postGame) return;
+    if (this.network.isHost) {
+      if (this.replayVotes.has(0)) this.replayVotes.delete(0);
+      else this.replayVotes.add(0);
+      this.broadcastReplayState();
+      return;
+    }
+
+    const voted = !this.replayVotes.has(this.me);
+    if (voted) this.replayVotes.add(this.me);
+    else this.replayVotes.delete(this.me);
+    this.game.updateReplayState([...this.replayVotes]);
+    this.network.send(MSG.REPLAY, { action: 'vote', voted });
+  }
+
+  onReplay(d) {
+    if (!this.postGame) return;
+    if (this.network.isHost) {
+      if (d.action !== 'vote' || !this.players.some(p => p.id === d.from)) return;
+      if (d.voted) this.replayVotes.add(d.from);
+      else this.replayVotes.delete(d.from);
+      this.broadcastReplayState();
+      return;
+    }
+    if (d.action !== 'state' || !Array.isArray(d.votes)) return;
+    const eligible = new Set(this.players.map(p => p.id));
+    this.replayVotes = new Set(d.votes.filter(id => Number.isInteger(id) && eligible.has(id)));
+    this.game.updateReplayState([...this.replayVotes]);
+  }
+
+  broadcastReplayState() {
+    const votes = [...this.replayVotes];
+    this.game.updateReplayState(votes);
+    if (this.network.isHost) this.network.send(MSG.REPLAY, { action: 'state', votes });
+  }
+
+  confirmReplay() {
+    if (!this.network.isHost || !this.postGame || !this.replayVotes.has(0)) return;
+    const players = this.players.filter(p =>
+      this.replayVotes.has(p.id) && (p.id === 0 || this.network.conns.get(p.id)?.open)
+    );
+    if (players.length < 2) return;
+    this.players = players;
+    this.launchGame(this.game.config, players);
   }
 
   leave(message) {
     this.network.destroy();
     this.players = [];
     this.started = false;
+    this.postGame = false;
+    this.replayVotes.clear();
     window.clashRoster?.set(null);
     this.show(false);
     this.status(message || 'Prêt à jouer ? Invite des amis.', '#menu-status');
