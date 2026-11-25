@@ -3,8 +3,11 @@ import { World } from './world.js';
 import { PlayerController } from './player.js';
 import { WeaponSystem, WEAPONS } from './weapons.js';
 import { HUD } from './hud.js';
-import { createCharacter, disposeCharacter, showGun, gunModel, box, SHIRT_COLORS } from './character.js';
+import { createCharacter, disposeCharacter, showGun, animateCharacter, gunModel, box, SHIRT_COLORS } from './character.js';
 import { MSG, MAX_PLAYERS } from '../network/protocol.js';
+import { settings } from '../ui/settings.js';
+import { normalizeAppearance } from './customization.js';
+import { GAMEPAD_BUTTONS, GamepadState } from './gamepad.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -19,7 +22,7 @@ const rnd = () => Math.random() * 2 - 1;
 const NET_DT = 1 / 20;
 const RESPAWN_TIME = 3;
 const SPAWN_PROTECTION = 1500;
-const WEAPON_IDS = ['shotgun', 'rifle', 'sniper'];
+const WEAPON_IDS = ['shotgun', 'rifle', 'sniper', 'knife'];
 
 const G_SPH = new THREE.SphereGeometry(1, 6, 6);
 const G_CYL = new THREE.CylinderGeometry(1, 1, 1, 5);
@@ -29,12 +32,12 @@ const M_BLOOD = new THREE.MeshBasicMaterial({ color: 0xb01818 });
 const M_DUST = new THREE.MeshBasicMaterial({ color: 0xc4c0b2 });
 const M_HOLE = new THREE.MeshBasicMaterial({ color: 0x0d0d0d });
 
-// --- Encodage compact des positions pour le réseau : [x, y, z, yaw, pitch, accroupi, arme] ---
+// --- État compact du joueur : [x, y, z, yaw, pitch, accroupi, arme, visée] ---
 const r2 = v => Math.round(v * 100) / 100;
-const encode = s => [r2(s.x), r2(s.y || 0), r2(s.z), r2(s.yaw || 0), r2(s.pitch || 0), s.crouch ? 1 : 0, Math.max(0, WEAPON_IDS.indexOf(s.w))];
+const encode = s => [r2(s.x), r2(s.y || 0), r2(s.z), r2(s.yaw || 0), r2(s.pitch || 0), s.crouch ? 1 : 0, Math.max(0, WEAPON_IDS.indexOf(s.w)), s.aim ? 1 : 0];
 const decode = a => ({
   x: clampN(a[0], -25, 25), y: clampN(a[1], -1, 8), z: clampN(a[2], -25, 25),
-  yaw: a[3], pitch: a[4], crouch: !!a[5], w: WEAPON_IDS[a[6]] || 'rifle'
+  yaw: a[3], pitch: a[4], crouch: !!a[5], w: WEAPON_IDS[a[6]] || 'rifle', aim: !!a[7]
 });
 const validPos = a => Array.isArray(a) && a.length >= 7 && a.every(Number.isFinite);
 const validShot = s => !!s && !!WEAPONS[s.weapon] &&
@@ -102,7 +105,7 @@ export class Game {
     this.scene.add(this.camera); // indispensable pour afficher l'arme en vue subjective
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -120,6 +123,7 @@ export class Game {
     this.host = false;
     this.me = 0;
     this.names = [];          // names[id] = pseudo ou null
+    this.appearances = [];
     this.ids = [];            // ids des joueurs encore présents
     this.roster = [];         // ids de tous les joueurs du début de partie (scoreboard)
     this.gone = new Set();    // ids des joueurs partis
@@ -148,8 +152,10 @@ export class Game {
     this.finalShown = false;
     this.sbHeld = false;
     this.weaponRecoil = 0;
+    this.knifeSwing = 0;
     this.hitmarkerUntil = 0;
     this.netAcc = 0;
+    this.gamepad = new GamepadState();
 
     this.buildWeaponView();
     this.buildCrosshair();
@@ -182,12 +188,16 @@ export class Game {
 
   /** Crée le modèle 3D d'un adversaire (un par joueur distant). */
   addRemote(id, spawn) {
-    const ch = createCharacter({ shirt: SHIRT_COLORS[id % SHIRT_COLORS.length], label: this.nameOf(id) });
+    const ch = createCharacter({
+      shirt: SHIRT_COLORS[id % SHIRT_COLORS.length],
+      label: this.nameOf(id),
+      appearance: this.appearances[id]
+    });
     this.scene.add(ch.group);
     ch.group.position.set(spawn.x, 0, spawn.z);
     ch.group.rotation.y = spawn.yaw;
-    const r = { x: spawn.x, y: 0, z: spawn.z, yaw: spawn.yaw, pitch: 0, crouch: false, w: 'rifle' };
-    this.remotes.set(id, { id, ch, r, n: { ...r }, moving: false, walkT: 0, deadT: null });
+    const r = { x: spawn.x, y: 0, z: spawn.z, yaw: spawn.yaw, pitch: 0, crouch: false, w: 'rifle', aim: false };
+    this.remotes.set(id, { id, ch, r, n: { ...r }, deadT: null });
   }
 
   removeRemote(id) {
@@ -319,7 +329,12 @@ export class Game {
   }
 
   snap() {
-    return { ...this.controller.snapshot(), crouch: this.controller.crouched, w: this.weapon.current };
+    return {
+      ...this.controller.snapshot(),
+      crouch: this.controller.crouched,
+      w: this.weapon.current,
+      aim: this.controller.aiming
+    };
   }
 
   /** Hôte : reçoit la position d'un invité. */
@@ -388,11 +403,14 @@ export class Game {
   // ============ DÉMARRAGE ============
 
   /** names[id] = pseudo (null si absent). `me` = mon id réseau (0 = hôte). */
-  start(config, me, names) {
+  start(config, me, names, appearances = []) {
     this.config = config;
     this.host = this.network.isHost;
     this.me = me;
     this.names = (names || []).map(n => n ?? null);
+    this.appearances = (appearances || []).map(appearance =>
+      appearance ? normalizeAppearance(appearance) : null
+    );
     this.ids = this.names.map((n, i) => (n != null ? i : -1)).filter(i => i >= 0);
     this.roster = this.ids.slice();
     this.gone = new Set();
@@ -435,6 +453,7 @@ export class Game {
     this.weaponModel.visible = true;
 
     this.weapon.reset();
+    this.knifeSwing = 0;
     this.chooseWeapon(config.weapon === 'all' ? 'rifle' : config.weapon, true);
 
     document.querySelector('#menu')?.classList.add('hidden');
@@ -455,11 +474,26 @@ export class Game {
   bindKeys() {
     document.addEventListener('keydown', e => {
       if (!this.active || this.death) return;
-      if (e.code === 'Digit1') this.chooseWeapon('shotgun');
-      if (e.code === 'Digit2') this.chooseWeapon('rifle');
-      if (e.code === 'Digit3') this.chooseWeapon('sniper');
-      if (e.code === 'KeyR') this.weapon.reload();
+      const keys = settings.data.keys;
+      if (e.code === keys.weapon1) this.chooseWeapon('shotgun');
+      if (e.code === keys.weapon2) this.chooseWeapon('rifle');
+      if (e.code === keys.weapon3) this.chooseWeapon('sniper');
+      if (e.code === keys.weapon4) this.chooseWeapon('knife');
+      if (e.code === keys.reload) this.weapon.reload();
     });
+    document.addEventListener('wheel', e => {
+      if (!this.active || this.death || document.pointerLockElement !== this.canvas) return;
+
+      const available = this.config.weapon === 'all'
+        ? ['shotgun', 'rifle', 'sniper', 'knife']
+        : [this.config.weapon, 'knife'];
+      const current = available.indexOf(this.weapon.current);
+      const direction = e.deltaY > 0 ? 1 : -1;
+      const next = (current + direction + available.length) % available.length;
+
+      e.preventDefault();
+      this.chooseWeapon(available[next]);
+    }, { passive: false });
     this.controller.onShoot = () => this.shoot();
 
     // Tab maintenu : scoreboard en cours de partie
@@ -476,7 +510,7 @@ export class Game {
   }
 
   chooseWeapon(name, force = false) {
-    if (!force && this.config.weapon !== 'all' && this.config.weapon !== name) return;
+    if (!force && name !== 'knife' && this.config.weapon !== 'all' && this.config.weapon !== name) return;
     this.weapon.select(name);
     this.controller.weapon = name; // synchronise cadence et dégâts côté contrôleur
   }
@@ -491,8 +525,10 @@ export class Game {
     const { yaw, pitch } = this.controller;
     const base = V(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
     const moving = this.moveSpeed > 0.8, air = !this.controller.grounded, a = this.ads > 0.6;
-    const hip = { shotgun: 0.03, rifle: 0.012, sniper: 0.05 }[w], aim = { shotgun: 0.01, rifle: 0.002, sniper: 0 }[w];
-    const spread = (a ? aim : hip) + (moving ? { shotgun: 0.006, rifle: 0.02, sniper: a ? 0.03 : 0.06 }[w] : 0) + (air ? 0.04 : 0);
+    const hip = { shotgun: 0.03, rifle: 0.012, sniper: 0.05 }[w] ?? 0;
+    const aim = { shotgun: 0.01, rifle: 0.002, sniper: 0 }[w] ?? 0;
+    const movingSpread = { shotgun: 0.006, rifle: 0.02, sniper: a ? 0.03 : 0.06 }[w] ?? 0;
+    const spread = (a ? aim : hip) + (moving ? movingSpread : 0) + (air && w !== 'knife' ? 0.04 : 0);
     const n = w === 'shotgun' ? 8 : 1;
     // Plombs répartis dans un petit disque autour du curseur (1er plomb au centre)
     const right = V(Math.cos(yaw), 0, -Math.sin(yaw)), up = new THREE.Vector3().crossVectors(right, base).normalize();
@@ -505,17 +541,19 @@ export class Game {
     }
     const shot = { weapon: w, o: [o.x, o.y, o.z], d: dirs };
 
+    if (w === 'knife') this.knifeSwing = 1;
     this.renderShot(shot, true);
 
-    // Recul de la visée
-    const kick = { shotgun: 0.05, rifle: 0.009, sniper: 0.06 }[w] * (a ? 0.6 : 1);
-    this.controller.pitch += kick;
-    this.controller.yaw += rnd() * kick * 0.5;
-    this.weaponRecoil = 1;
-    this.muzzleFlash.material.opacity = 1;
-    this.muzzleFlash.scale.setScalar(0.8 + Math.random() * 0.7);
-    this.muzzleLight.intensity = 8;
-    this.bang(w, 0.35);
+    if (w !== 'knife') {
+      const kick = { shotgun: 0.05, rifle: 0.009, sniper: 0.06 }[w] * (a ? 0.6 : 1);
+      this.controller.pitch += kick;
+      this.controller.yaw += rnd() * kick * 0.5;
+      this.weaponRecoil = 1;
+      this.muzzleFlash.material.opacity = 1;
+      this.muzzleFlash.scale.setScalar(0.8 + Math.random() * 0.7);
+      this.muzzleLight.intensity = 8;
+      this.bang(w, 0.35);
+    }
 
     if (this.host) {
       this.relayShot(this.me, shot);
@@ -543,6 +581,7 @@ export class Game {
 
   /** Effets visuels/sonores d'un tir (le mien ou celui d'un adversaire). */
   renderShot(shot, mine) {
+    if (shot.weapon === 'knife') return;
     const o = V(...shot.o), range = WEAPONS[shot.weapon]?.range ?? 30;
     const first = V(...shot.d[0]);
     let muzzle;
@@ -930,8 +969,8 @@ export class Game {
       r.y = lerp(r.y, n.y || 0, k);
       r.z = lerp(r.z, n.z, k);
       r.yaw = lerpAngle(r.yaw, n.yaw || 0, k);
+      r.pitch = lerp(r.pitch, n.pitch || 0, k);
       r.crouch = !!n.crouch;
-      rem.moving = dt > 0 && Math.hypot(r.x - px, r.z - pz) / dt > 0.6;
 
       m.position.x = r.x; m.position.z = r.z;
       m.rotation.y = r.yaw;
@@ -950,13 +989,13 @@ export class Game {
       m.position.y = Math.max(0, r.y); // les pieds ne passent jamais sous le sol
       m.scale.y = lerp(m.scale.y, r.crouch ? 0.78 : 1, k);
       showGun(ch, n.w || 'rifle');
-
-      if (rem.moving) rem.walkT += dt * 10;
-      const swing = rem.moving ? Math.sin(rem.walkT) * 0.55 : 0;
-      ch.arms[0].rotation.x = swing;
-      ch.arms[1].rotation.x = 1.35 + swing * 0.08; // bras armé pointé vers l'avant
-      ch.legs[0].rotation.x = -swing;
-      ch.legs[1].rotation.x = swing;
+      const speed = dt > 0 ? Math.hypot(r.x - px, r.z - pz) / dt : 0;
+      animateCharacter(ch, dt, {
+        speed,
+        aiming: !!n.aim && n.w !== 'knife',
+        pitch: r.pitch,
+        crouched: r.crouch
+      });
     }
   }
 
@@ -964,6 +1003,10 @@ export class Game {
     const W = this.weaponModel;
     this.weaponRecoil = Math.max(0, this.weaponRecoil - dt * 8);
     const r = this.weaponRecoil;
+    this.knifeSwing = Math.max(0, this.knifeSwing - dt / 0.32);
+    const swing = this.weapon.current === 'knife'
+      ? Math.sin((1 - this.knifeSwing) * Math.PI)
+      : 0;
 
     this.bobT += dt * Math.min(this.moveSpeed, 9) * 1.5;
     const mv = Math.min(1, this.moveSpeed / 5);
@@ -974,15 +1017,17 @@ export class Game {
     for (const t in this.guns) this.guns[t].visible = t === cur;
     W.visible = !this.death && !(cur === 'sniper' && a > 0.6);
     const mz = this.guns[cur].userData.muzzle;
-    this.muzzleFlash.position.z = mz - 0.05;
-    this.muzzleLight.position.z = mz + 0.1;
+    if (mz != null) {
+      this.muzzleFlash.position.z = mz - 0.05;
+      this.muzzleLight.position.z = mz + 0.1;
+    }
     const bob = (1 - a) * mv;
     W.position.set(
-      lerp(0.34, 0, a) + Math.sin(this.bobT) * 0.008 * bob,
+      lerp(0.34, 0, a) + Math.sin(this.bobT) * 0.008 * bob + swing * 0.12,
       lerp(-0.31, -0.26, a) - r * 0.06 - this.reloadK * 0.22 + Math.abs(Math.cos(this.bobT)) * 0.008 * bob,
       lerp(-0.65, -0.55, a) + r * 0.12
     );
-    W.rotation.set(-0.035 * (1 - a) + r * 0.1 - this.reloadK * 0.5, -0.045 * (1 - a), (-0.025 + this.reloadK * 0.5) * (1 - a));
+    W.rotation.set(-0.035 * (1 - a) + r * 0.1 - this.reloadK * 0.5 + swing * 0.45, -0.045 * (1 - a), (-0.025 + this.reloadK * 0.5) * (1 - a) - swing * 1.1);
 
     this.muzzleFlash.material.opacity = Math.max(0, this.muzzleFlash.material.opacity - dt * 16);
     this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 60);
@@ -1113,6 +1158,44 @@ export class Game {
     this.sbEl.classList.remove('show', 'final');
   }
 
+  updateGamepad() {
+    const pad = this.gamepad.pad();
+    if (!pad) {
+      this.gamepad.update();
+      return;
+    }
+
+    if (this.gamepad.pressedNow(GAMEPAD_BUTTONS.BACK)) {
+      this.sbHeld = !this.finalShown;
+    }
+    if (!this.gamepad.held(GAMEPAD_BUTTONS.BACK)) {
+      if (this.sbHeld) {
+        this.sbHeld = false;
+        this.hideScoreboard();
+      }
+    }
+
+    if (this.gamepad.pressedNow(GAMEPAD_BUTTONS.WEST)) this.weapon.reload();
+    if (this.gamepad.pressedNow(GAMEPAD_BUTTONS.NORTH)) this.cycleWeapon(1);
+    if (this.gamepad.pressedNow(GAMEPAD_BUTTONS.LB)) this.cycleWeapon(-1);
+    if (this.gamepad.pressedNow(GAMEPAD_BUTTONS.RB)) this.cycleWeapon(1);
+    if (this.gamepad.pressedNow(GAMEPAD_BUTTONS.DPAD_UP)) this.chooseWeapon('rifle');
+    if (this.gamepad.pressedNow(GAMEPAD_BUTTONS.DPAD_RIGHT)) this.chooseWeapon('shotgun');
+    if (this.gamepad.pressedNow(GAMEPAD_BUTTONS.DPAD_DOWN)) this.chooseWeapon('sniper');
+    if (this.gamepad.pressedNow(GAMEPAD_BUTTONS.DPAD_LEFT)) this.chooseWeapon('knife');
+    this.gamepad.update();
+  }
+
+  cycleWeapon(direction) {
+    if (!this.active || this.death) return;
+    const available = this.config.weapon === 'all'
+      ? ['shotgun', 'rifle', 'sniper', 'knife']
+      : [this.config.weapon, 'knife'];
+    const current = available.indexOf(this.weapon.current);
+    const next = (current + direction + available.length) % available.length;
+    this.chooseWeapon(available[next]);
+  }
+
   resize() {
     this.camera.aspect = innerWidth / innerHeight;
     this.camera.updateProjectionMatrix();
@@ -1129,6 +1212,7 @@ export class Game {
     const dt = raw * this.timeScale;
 
     if (this.active) {
+      this.updateGamepad();
       this.controller.update(dt);
 
       const p = this.controller.position;
@@ -1146,12 +1230,12 @@ export class Game {
       this.fovPunch = lerp(this.fovPunch, 0, Math.min(1, raw * 6));
       // Visée (clic droit) : zoom, lunette du sniper
       const wn = this.weapon.current;
-      const aimWanted = this.controller.aiming && this.controller.enabled && !this.death;
+      const aimWanted = this.controller.aiming && this.controller.enabled && !this.death && wn !== 'knife';
       this.ads = lerp(this.ads, aimWanted ? 1 : 0, Math.min(1, raw * 10));
       const scoped = wn === 'sniper' ? Math.max(0, (this.ads - 0.6) / 0.4) : 0;
       this.scopeEl.style.opacity = scoped;
       this.crosshair.style.opacity = scoped > 0.5 ? 0 : 1;
-      const adsFov = { shotgun: 62, rifle: 58, sniper: 20 }[wn];
+      const adsFov = { shotgun: 62, rifle: 58, sniper: 20 }[wn] ?? 75;
       const baseFov = lerp(this.controller.sprinting && this.moveSpeed > 3 ? 82 : 75, adsFov, this.ads);
       this.camera.fov = lerp(this.camera.fov, baseFov + this.fovPunch, Math.min(1, raw * 8));
       this.camera.updateProjectionMatrix();

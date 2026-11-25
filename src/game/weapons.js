@@ -28,6 +28,14 @@ export const WEAPONS = {
     reloadTime: 1800,
     damage: 80,
     range: 45
+  },
+
+  knife: {
+    label: 'COUTEAU',
+    melee: true,
+    cooldown: 600,
+    damage: 50,
+    range: 2.4
   }
 };
 
@@ -39,18 +47,18 @@ export class WeaponSystem {
     this.reloading = false;
     this.reloadTimers = {};
 
-    this.lastShot = 0;
+    this.lastShot = null;
 
     this.reset();
   }
 
   reset() {
     for (const [name, weapon] of Object.entries(WEAPONS)) {
-      this.ammo[name] = weapon.capacity;
+      if (!weapon.melee) this.ammo[name] = weapon.capacity;
     }
 
     this.reloading = false;
-    this.lastShot = 0;
+    this.lastShot = null;
 
     for (const timer of Object.values(this.reloadTimers)) {
       clearTimeout(timer);
@@ -73,6 +81,7 @@ export class WeaponSystem {
     const weapon = WEAPONS[name];
 
     if (!weapon) return false;
+    if (weapon.melee) return false;
 
     if (this.reloadTimers[name]) return false;
 
@@ -104,6 +113,13 @@ export class WeaponSystem {
       return false;
     }
 
+    if (weapon.melee) {
+      const now = performance.now();
+      if (this.lastShot !== null && now - this.lastShot < weapon.cooldown) return false;
+      this.lastShot = now;
+      return true;
+    }
+
     if (this.ammo[name] <= 0) {
       this.reload();
       return false;
@@ -111,7 +127,7 @@ export class WeaponSystem {
 
     const now = performance.now();
 
-    if (now - this.lastShot < weapon.cooldown) {
+    if (this.lastShot !== null && now - this.lastShot < weapon.cooldown) {
       return false;
     }
 
@@ -126,6 +142,7 @@ export class WeaponSystem {
   }
 
   getAmmo() {
+    if (WEAPONS[this.current]?.melee) return null;
     return this.ammo[this.current] ?? 0;
   }
 

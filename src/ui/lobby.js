@@ -1,4 +1,5 @@
 import { MSG, MAX_PLAYERS } from '../network/protocol.js';
+import { getAppearance, normalizeAppearance } from '../game/customization.js';
 
 const $ = s => document.querySelector(s);
 const NICKNAME_KEY = 'clash.nickname';
@@ -30,6 +31,7 @@ export class Lobby {
     this.me = 0;
     this.started = false;
     this.postGame = false;
+    this.kickReason = '';
     this.replayVotes = new Set();
     this.game.onFinish = () => this.onGameFinished();
     this.game.onReplayVote = () => this.toggleReplayVote();
@@ -57,8 +59,13 @@ export class Lobby {
 
     n.on(MSG.HELLO, d => this.onHello(d));
     n.on(MSG.ROSTER, d => this.onRoster(d));
-    n.on(MSG.START, d => this.begin(d.config, d.you, d.names));
+    n.on(MSG.START, d => this.begin(d.config, d.you, d.names, d.appearances));
     n.on(MSG.REPLAY, d => this.onReplay(d));
+    n.on(MSG.KICK, () => {
+      if (n.isHost || this.started) return;
+      this.kickReason = 'Tu as été expulsé du salon.';
+      this.leave(this.kickReason);
+    });
     n.on('peer-left', d => {
       if (!n.isHost) return;
       if (this.postGame) {
@@ -70,7 +77,10 @@ export class Lobby {
         this.publish();
       }
     });
-    n.on('disconnected', () => { if (!this.started && !n.isHost) this.leave('Connexion avec l’hôte perdue.'); });
+    n.on('disconnected', () => {
+      if (this.kickReason) { this.kickReason = ''; return; }
+      if (!this.started && !n.isHost) this.leave('Connexion avec l’hôte perdue.');
+    });
     n.on('error', m => this.status(m));
   }
 
@@ -113,10 +123,14 @@ export class Lobby {
 
   async create() {
     try {
+      this.kickReason = '';
       this.status('Création du salon…');
       await this.network.createRoom();
       this.me = 0;
-      this.players = [{ id: 0, name: this.nickname() }];
+      this.players = [{
+        id: 0, name: this.nickname(), appearance: getAppearance(),
+        friendCode: this.friends?.code || null
+      }];
       $('#display-code').textContent = this.network.roomCode;
       this.show(true);
       this.render();
@@ -125,9 +139,14 @@ export class Lobby {
 
   async join() {
     try {
+      this.kickReason = '';
       this.status('Connexion…');
       await this.network.joinRoom($('#room-code').value);
-      this.network.send(MSG.HELLO, { name: this.nickname() });
+      this.network.send(MSG.HELLO, {
+        name: this.nickname(),
+        appearance: getAppearance(),
+        friendCode: this.friends?.code || null
+      });
       $('#display-code').textContent = this.network.roomCode;
       this.players = [];
       this.show(true);
@@ -144,7 +163,14 @@ export class Lobby {
     let name = String(d.name || 'Joueur').slice(0, 16), k = 2;
     const base = name;
     while (this.players.some(p => p.name === name)) name = `${base} ${k++}`;
-    this.players = this.players.filter(p => p.id !== d.from).concat({ id: d.from, name });
+    this.players = this.players.filter(p => p.id !== d.from).concat({
+      id: d.from,
+      name,
+      appearance: normalizeAppearance(d.appearance),
+      friendCode: typeof d.friendCode === 'string' && /^[A-HJ-NP-Z2-9]{8}$/.test(d.friendCode)
+        ? d.friendCode
+        : null
+    });
     this.publish();
   }
 
@@ -165,14 +191,28 @@ export class Lobby {
     const n = this.players.length;
     this.friends?.push();
     window.clashRoster?.set(
-      this.players.map(p => ({ id: p.id, name: p.name, host: p.id === 0, me: p.id === this.me })),
-      this.network.isHost
+      this.players.map(p => ({
+        id: p.id, name: p.name, host: p.id === 0, me: p.id === this.me,
+        appearance: p.appearance,
+        friendCode: p.friendCode,
+        friend: !!p.friendCode && !!this.friends?.isFriend(p.friendCode),
+        pending: !!p.friendCode && !!this.friends?.pending.includes(p.friendCode)
+      })),
+      this.network.isHost,
+      id => this.kickPlayer(id)
     );
     const start = $('#start-game');
     start.disabled = n < 2;
     this.status(this.network.isHost
       ? (n < 2 ? 'Partage ce code avec tes amis (jusqu’à 16 joueurs).' : `${n} joueurs connectés. Lance la partie quand tout le monde est là.`)
       : `${n} joueur${n > 1 ? 's' : ''} dans le salon. L’hôte va lancer la partie…`);
+  }
+
+  kickPlayer(id) {
+    if (!this.network.isHost || this.started || id === this.me ||
+      !this.players.some(player => player.id === id)) return;
+    const player = this.players.find(p => p.id === id);
+    if (confirm(`Expulser ${player.name} du salon ?`)) this.network.kick(id);
   }
 
   syncSettings() {
@@ -195,19 +235,26 @@ export class Lobby {
   launchGame(config, players) {
     // Les ids réseau peuvent avoir des trous (joueur parti) : names[id] = null pour les absents.
     const names = [];
+    const appearances = [];
     for (const p of players) names[p.id] = p.name;
-    for (let i = 0; i < names.length; i++) names[i] ??= null;
+    for (const p of players) appearances[p.id] = p.appearance || null;
+    for (let i = 0; i < names.length; i++) {
+      names[i] ??= null;
+      appearances[i] ??= null;
+    }
     this.network.locked = true;
-    for (const p of players) if (p.id !== 0) this.network.sendTo(p.id, MSG.START, { config, names, you: p.id });
-    this.begin(config, 0, names);
+    for (const p of players) if (p.id !== 0) {
+      this.network.sendTo(p.id, MSG.START, { config, names, appearances, you: p.id });
+    }
+    this.begin(config, 0, names, appearances);
   }
 
-  begin(config, you, names) {
+  begin(config, you, names, appearances) {
     this.postGame = false;
     this.replayVotes.clear();
     this.started = true;
     this.friends?.push();
-    this.game.start(config, you, names);
+    this.game.start(config, you, names, appearances);
   }
 
   onGameFinished() {

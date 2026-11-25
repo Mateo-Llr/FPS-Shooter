@@ -86,6 +86,16 @@ export class Network {
     const c = this.conns.get(id);
     if (c?.open) c.send(packet(type, payload));
   }
+  kick(id) {
+    if (!this.isHost || this.locked) return false;
+    const conn = this.conns.get(id);
+    if (!conn) return false;
+    this.sendTo(id, MSG.KICK);
+    setTimeout(() => {
+      if (this.conns.get(id) === conn) conn.close();
+    }, 150);
+    return true;
+  }
 
   errorText(err) {
     const map = { 'peer-unavailable': 'Salon introuvable. Vérifie le code et réessaie.', 'unavailable-id': 'Ce code est déjà utilisé. Réessaie.', 'network': 'Erreur réseau : PeerJS Cloud est peut-être indisponible.', 'browser-incompatible': 'Ce navigateur ne prend pas en charge WebRTC.' };

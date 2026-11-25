@@ -136,7 +136,11 @@ export class HUD {
     }
 
     if (this.$('#ammo')) {
-      this.$('#ammo').textContent = data.ammo ?? '--';
+      this.$('#ammo').textContent = data.ammo == null ? '—' : data.ammo;
+    }
+
+    if (this.$('#ammo-reserve')) {
+      this.$('#ammo-reserve').textContent = data.ammo == null ? '' : ' / ∞';
     }
 
     if (this.$('#you-name')) {

@@ -16,6 +16,7 @@ export const ACTIONS = [
   ['weapon1', 'Fusil à pompe', 'Digit1'],
   ['weapon2', 'Fusil d’assaut', 'Digit2'],
   ['weapon3', 'Sniper', 'Digit3'],
+  ['weapon4', 'Couteau', 'Digit4'],
   ['scoreboard', 'Tableau des scores', 'Tab']
 ];
 const defaultKeys = () => Object.fromEntries(ACTIONS.map(([id, , key]) => [id, key]));
@@ -80,11 +81,56 @@ export function keyLabel(code) {
   return code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'PAVÉ ').toUpperCase();
 }
 
+const settingsSections = () => `
+  <div class="settings-controls">
+    <section>
+      <h3>SOURIS</h3>
+      <div class="set-row">
+        <span>Sensibilité</span>
+        <input type="range" class="set-sens" min="0.1" max="3" step="0.05" />
+        <output class="set-sens-out"></output>
+      </div>
+    </section>
+
+    <section>
+      <h3>AUDIO</h3>
+      <div class="set-row">
+        <span>Volume général</span>
+        <input type="range" class="set-vol" min="0" max="100" step="1" />
+        <output class="set-vol-out"></output>
+      </div>
+    </section>
+
+    <section>
+      <h3>MANETTE</h3>
+      <div class="controller-map">
+        <span><b>Stick gauche</b> Se déplacer</span>
+        <span><b>Stick droit</b> Regarder</span>
+        <span><b>A / Croix bas</b> Sauter</span>
+        <span><b>B / Croix droite</b> S’accroupir</span>
+        <span><b>LT</b> Visée</span>
+        <span><b>RT</b> Tirer</span>
+        <span><b>X / Croix gauche</b> Recharger / DPad armes</span>
+        <span><b>Y / Croix haut</b> Arme suivante</span>
+        <span><b>LB / RB</b> LB précédente · RB suivante</span>
+        <span><b>View / DOS</b> Tableau des scores</span>
+      </div>
+    </section>
+
+    <section>
+      <h3>CONTRÔLES <small>Clique sur une touche puis appuie sur la nouvelle (Échap pour annuler)</small></h3>
+      <div class="set-keys keys-grid"></div>
+      <div class="set-foot"><button class="quiet set-reset">RÉINITIALISER LES TOUCHES</button></div>
+    </section>
+  </div>`;
+
 // ---------- Interface ----------
 
 export class SettingsUI {
   constructor() {
     this.listening = null;
+    this.listeningRoot = null;
+    this.roots = [];
 
     this.el = document.createElement('div');
     this.el.id = 'settings';
@@ -92,96 +138,107 @@ export class SettingsUI {
     this.el.innerHTML = `
       <div class="modal" role="dialog" aria-label="Paramètres">
         <div class="modal-head"><h2>PARAMÈTRES</h2><button class="quiet" data-close>FERMER ✕</button></div>
-
-        <section>
-          <h3>SOURIS</h3>
-          <div class="set-row">
-            <span>Sensibilité</span>
-            <input type="range" id="set-sens" min="0.1" max="3" step="0.05" />
-            <output id="set-sens-out"></output>
-          </div>
-        </section>
-
-        <section>
-          <h3>AUDIO</h3>
-          <div class="set-row">
-            <span>Volume général</span>
-            <input type="range" id="set-vol" min="0" max="100" step="1" />
-            <output id="set-vol-out"></output>
-          </div>
-        </section>
-
-        <section>
-          <h3>CONTRÔLES <small>Clique sur une touche puis appuie sur la nouvelle (Échap pour annuler)</small></h3>
-          <div id="set-keys" class="keys-grid"></div>
-          <div class="set-foot"><button class="quiet" id="set-reset">RÉINITIALISER LES TOUCHES</button></div>
-        </section>
+        ${settingsSections()}
       </div>`;
     document.body.appendChild(this.el);
 
-    this.sens = this.el.querySelector('#set-sens');
-    this.sensOut = this.el.querySelector('#set-sens-out');
-    this.vol = this.el.querySelector('#set-vol');
-    this.volOut = this.el.querySelector('#set-vol-out');
-    this.keysEl = this.el.querySelector('#set-keys');
-
-    this.sens.oninput = () => {
-      settings.data.sens = +this.sens.value;
-      settings.save();
-      this.refreshOutputs();
-    };
-    this.vol.oninput = () => {
-      settings.data.volume = +this.vol.value / 100;
-      settings.save();
-      this.refreshOutputs();
-      this.blip();
-    };
-    this.el.querySelector('#set-reset').onclick = () => { settings.resetKeys(); this.render(); };
+    this.modalControls = this.el.querySelector('.settings-controls');
+    this.roots.push(this.modalControls);
+    settings.onChange(() => this.roots.forEach(root => this.refresh(root)));
+    this.bindControls(this.modalControls);
+    this.render(this.modalControls);
     this.el.querySelector('[data-close]').onclick = () => this.close();
     this.el.addEventListener('mousedown', e => { if (e.target === this.el) this.close(); });
 
     // Capture de la touche à réassigner (phase de capture : le jeu ne la voit pas).
     document.addEventListener('keydown', e => {
-      if (!this.el.classList.contains('show')) return;
       if (this.listening) {
         e.preventDefault(); e.stopPropagation();
         const action = this.listening;
+        const root = this.listeningRoot;
         this.listening = null;
+        this.listeningRoot = null;
         if (e.code !== 'Escape') settings.rebind(action, e.code);
-        this.render();
-      } else if (e.code === 'Escape') {
+        this.refresh(root);
+      } else if (e.code === 'Escape' && this.el.classList.contains('show')) {
         e.preventDefault(); e.stopPropagation();
         this.close();
       }
     }, true);
   }
 
-  open() { this.render(); this.el.classList.add('show'); }
-  close() { this.listening = null; this.el.classList.remove('show'); this.onClose?.(); }
-
-  refreshOutputs() {
-    this.sensOut.textContent = `${(+this.sens.value).toFixed(2)}×`;
-    this.volOut.textContent = `${this.vol.value}%`;
+  mountInline(target) {
+    target.innerHTML = settingsSections();
+    const root = target.querySelector('.settings-controls');
+    this.roots.push(root);
+    this.bindControls(root);
+    this.render(root);
   }
 
-  render() {
-    this.sens.value = settings.data.sens;
-    this.vol.value = Math.round(settings.data.volume * 100);
-    this.refreshOutputs();
+  bindControls(root) {
+    root.querySelector('.set-sens').oninput = e => {
+      settings.data.sens = +e.currentTarget.value;
+      settings.save();
+    };
+    root.querySelector('.set-vol').oninput = e => {
+      settings.data.volume = +e.currentTarget.value / 100;
+      settings.save();
+      this.blip();
+    };
+    root.querySelector('.set-reset').onclick = () => settings.resetKeys();
+    root.addEventListener('click', e => {
+      const btn = e.target.closest('.key-btn');
+      if (!btn) return;
+      this.listening = btn.dataset.action;
+      this.listeningRoot = root;
+      this.render(root);
+    });
+  }
 
-    this.keysEl.replaceChildren();
+  refresh(root) {
+    if (!root?.isConnected) return;
+    root.querySelector('.set-sens').value = settings.data.sens;
+    root.querySelector('.set-sens-out').textContent = `${(+settings.data.sens).toFixed(2)}×`;
+    root.querySelector('.set-vol').value = Math.round(settings.data.volume * 100);
+    root.querySelector('.set-vol-out').textContent = `${Math.round(settings.data.volume * 100)}%`;
+    for (const btn of root.querySelectorAll('.key-btn')) {
+      const action = btn.dataset.action;
+      btn.textContent = this.listeningRoot === root && this.listening === action
+        ? 'APPUIE SUR UNE TOUCHE…'
+        : keyLabel(settings.data.keys[action]);
+      btn.classList.toggle('listening', this.listeningRoot === root && this.listening === action);
+    }
+  }
+
+  render(root) {
+    root.querySelector('.set-sens').value = settings.data.sens;
+    root.querySelector('.set-sens-out').textContent = `${(+settings.data.sens).toFixed(2)}×`;
+    root.querySelector('.set-vol').value = Math.round(settings.data.volume * 100);
+    root.querySelector('.set-vol-out').textContent = `${Math.round(settings.data.volume * 100)}%`;
+    const keysEl = root.querySelector('.set-keys');
+    keysEl.replaceChildren();
     for (const [id, label] of ACTIONS) {
       const row = document.createElement('div');
       row.className = 'key-row';
       const name = document.createElement('span');
       name.textContent = label;
       const btn = document.createElement('button');
-      btn.className = 'key-btn' + (this.listening === id ? ' listening' : '');
-      btn.textContent = this.listening === id ? 'APPUIE SUR UNE TOUCHE…' : keyLabel(settings.data.keys[id]);
-      btn.onclick = () => { this.listening = id; this.render(); };
+      btn.className = 'key-btn' + (this.listeningRoot === root && this.listening === id ? ' listening' : '');
+      btn.dataset.action = id;
+      btn.textContent = this.listeningRoot === root && this.listening === id ? 'APPUIE SUR UNE TOUCHE…' : keyLabel(settings.data.keys[id]);
       row.append(name, btn);
-      this.keysEl.appendChild(row);
+      keysEl.appendChild(row);
     }
+  }
+
+  open() { this.render(this.modalControls); this.el.classList.add('show'); }
+  close() {
+    if (this.listeningRoot === this.modalControls) {
+      this.listening = null;
+      this.listeningRoot = null;
+    }
+    this.el.classList.remove('show');
+    this.onClose?.();
   }
 
   /** Petit bip pour entendre le volume choisi. */

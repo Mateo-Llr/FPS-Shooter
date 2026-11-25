@@ -11,6 +11,7 @@
     />
 
     <title>CLASH//ROOM — Duel FPS</title>
+    <link rel="icon" href="/favicon.ico" sizes="any" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -26,90 +27,58 @@
       <!-- ================= MENU PRINCIPAL ================= -->
 
       <main id="menu" class="screen menu-screen">
+        <header class="menu-topbar">
+          <div class="brand menu-brand"><span>CLASH</span><i>//</i><span>ROOM</span></div>
+          <nav class="menu-tabs" aria-label="Menu principal">
+            <button class="menu-tab active" type="button" data-tab="play" aria-selected="true"><span>01</span> JOUER</button>
+            <button class="menu-tab" type="button" data-tab="customize" aria-selected="false"><span>02</span> CUSTOMISATION</button>
+            <button class="menu-tab" type="button" data-tab="friends" aria-selected="false"><span>03</span> AMIS</button>
+            <button class="menu-tab" type="button" data-tab="settings" aria-selected="false"><span>04</span> PARAMÈTRES</button>
+          </nav>
+          <div class="topbar-status"><i></i> OPÉRATIONNEL</div>
+        </header>
 
-        <!-- Colonne gauche : identité + action principale -->
-        <div class="menu-left">
-          <div class="brand">
-            <span>CLASH</span><i>//</i><span>ROOM</span>
+        <section class="menu-view active" data-view="play">
+          <div class="play-copy">
+            <p class="eyebrow">SALON PRIVÉ · 2 À 16 JOUEURS · EN LIGNE</p>
+            <h1>ENTRE DANS<br /><span>L’ARÈNE.</span></h1>
+            <p class="play-intro">Monte ton escouade. Défie tes amis. Écris ta propre légende.</p>
+            <div class="play-stats"><span><b>01</b> CRÉE UN SALON</span><span><b>02</b> INVITE TES AMIS</span><span><b>03</b> QUE LE MEILLEUR GAGNE</span></div>
           </div>
-
-          <p class="eyebrow">
-            SALON PRIVÉ · 2 À 16 JOUEURS · EN LIGNE
-          </p>
-
           <section class="panel glass menu-card">
             <header class="menu-card-head">
               <span class="menu-tag">JOUER</span>
               <span class="menu-sub">CONFIGURATION RAPIDE</span>
             </header>
-
             <label for="nickname">TON PSEUDO</label>
-
-            <input
-              id="nickname"
-              maxlength="16"
-              autocomplete="nickname"
-              placeholder="Joueur"
-            />
-
-            <button id="create-room" class="primary big">
-              CRÉER UN SALON
-            </button>
-
+            <input id="nickname" maxlength="16" autocomplete="nickname" placeholder="Joueur" />
+            <button id="create-room" class="primary big">CRÉER UN SALON</button>
             <div class="menu-divider"><span>OU REJOINS UNE PARTIE</span></div>
-
             <div class="join-row">
-              <input
-                id="room-code"
-                maxlength="6"
-                placeholder="CODE À 6 CARACTÈRES"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button id="join-room">
-                REJOINDRE
-              </button>
+              <input id="room-code" maxlength="6" placeholder="CODE À 6 CARACTÈRES" autocomplete="off" spellcheck="false" />
+              <button id="join-room">REJOINDRE</button>
             </div>
-
-            <p
-              id="menu-status"
-              class="status"
-              aria-live="polite"
-            >
-              Prêt à jouer ? Invite un ami.
-            </p>
+            <p id="menu-status" class="status" aria-live="polite">Prêt à jouer ? Invite un ami.</p>
           </section>
-
-          <div class="menu-footer-row">
-            <button id="open-settings" class="quiet">
-              ⚙ PARAMÈTRES
-            </button>
+          <div class="play-art" aria-hidden="true">
+            <div class="play-reticle"><i></i><b></b></div>
+            <span>SECTEUR 07</span><small>LIVE // SESSION</small>
+            <strong>CLASH</strong>
           </div>
+        </section>
 
-          <p class="footnote">
-            NAVIGATEUR DESKTOP · CHROME / FIREFOX / EDGE / SAFARI
-          </p>
-        </div>
+        <section class="menu-view hidden" data-view="customize">
+          <div id="customization-panel"></div>
+        </section>
 
-        <!-- Colonne centre : décoration HUD -->
-        <div class="menu-center" aria-hidden="true">
-          <div class="hud-decor">
-            <span class="hud-ring hud-ring-1"></span>
-            <span class="hud-ring hud-ring-2"></span>
-            <span class="hud-ring hud-ring-3"></span>
-            <span class="hud-cross-h"></span>
-            <span class="hud-cross-v"></span>
-            <span class="hud-dot"></span>
-            <span class="hud-label hud-label-tl">SECTEUR 07</span>
-            <span class="hud-label hud-label-br">LIVE // SESSION</span>
-          </div>
-          <div class="hud-watermark">CLASH</div>
-        </div>
-
-        <!-- Colonne droite : amis -->
-        <div class="menu-right">
+        <section class="menu-view hidden friends-view" data-view="friends">
+          <div class="section-intro"><p class="eyebrow">TON ESCOUADE · TES INVITATIONS</p><h1>RESTE EN<br /><span>CONTACT.</span></h1><p>Ajoute tes amis et rejoins leurs salons en un clic.</p></div>
           <div id="friends-menu" class="panel friends glass"></div>
-        </div>
+        </section>
+
+        <section class="menu-view hidden settings-view" data-view="settings">
+          <div id="menu-settings-panel"></div>
+        </section>
       </main>
 
 
@@ -256,9 +225,9 @@
               <small id="weapon-name">FUSIL D'ASSAUT</small>
               <strong>
                 <span id="ammo">30</span>
-                <em> / ∞</em>
+                <em id="ammo-reserve"> / ∞</em>
               </strong>
-              <small>R : RECHARGER · 1/2/3 : ARME</small>
+              <small>R : RECHARGER · 1/2/3/4 : ARME</small>
             </div>
 
           </div>
@@ -270,7 +239,7 @@
           ></div>
 
           <div id="lock-hint">
-            CLIQUE DANS LE JEU POUR VERROUILLER LA SOURIS
+            SOURIS : CLIQUE POUR VERROUILLER · MANETTE : STICKS + GACHETTES
           </div>
 
         </div>

@@ -1,5 +1,6 @@
 
 import { settings } from "../ui/settings.js";
+import { GAMEPAD_BUTTONS, GamepadState } from "./gamepad.js";
 
 export const PLAYER_RADIUS = 0.42;
 export const PLAYER_HEIGHT = 1.75;
@@ -26,16 +27,32 @@ export class PlayerController {
     this.enabled = false;
 
     this.onShoot = null;
-    this.lastShot = 0;
+    this.lastShot = null;
     this.weapon = "rifle";
 
     this.firing = false;
     this.aiming = false;
+    this.mouseFiring = false;
+    this.mouseAiming = false;
+    this.gamepadFiring = false;
+    this.gamepadAiming = false;
+    this.gamepad = new GamepadState();
+    this.gamepadJumpHeld = false;
     this.camHeight = 1.68;
     this.bind();
   }
 
   bind() {
+    document.addEventListener("keydown", (e) => {
+      if (
+        this.enabled &&
+        document.pointerLockElement === this.canvas &&
+        e.code !== "Escape"
+      ) {
+        e.preventDefault();
+      }
+    }, true);
+
     document.addEventListener("keydown", (e) => {
       this.keys[e.code] = true;
 
@@ -54,6 +71,10 @@ export class PlayerController {
 
     window.addEventListener("blur", () => {
       this.keys = {};
+      this.mouseAiming = false;
+      this.mouseFiring = false;
+      this.aiming = this.gamepadAiming;
+      this.firing = this.gamepadFiring;
     });
 
     this.canvas.addEventListener("click", () => {
@@ -89,6 +110,7 @@ export class PlayerController {
         this.enabled &&
         document.pointerLockElement === this.canvas
       ) {
+        this.mouseFiring = true;
         this.firing = true;
         this.tryShoot();
       }
@@ -97,18 +119,30 @@ export class PlayerController {
     document.addEventListener("contextmenu", (e) => e.preventDefault());
 
     document.addEventListener("mousedown", (e) => {
-      if (e.button === 2 && this.enabled && document.pointerLockElement === this.canvas) this.aiming = true;
+      if (e.button === 2 && this.enabled && document.pointerLockElement === this.canvas) {
+        this.mouseAiming = true;
+        this.aiming = true;
+      }
     });
 
     document.addEventListener("mouseup", (e) => {
-      if (e.button === 2) this.aiming = false;
-      if (e.button === 0) this.firing = false;
+      if (e.button === 2) {
+        this.mouseAiming = false;
+        this.aiming = this.gamepadAiming;
+      }
+      if (e.button === 0) {
+        this.mouseFiring = false;
+        this.firing = this.gamepadFiring;
+      }
     });
 
     document.addEventListener("pointerlockchange", () => {
-      this.firing = false;
       if (document.pointerLockElement !== this.canvas) {
         this.keys = {};
+        this.mouseAiming = false;
+        this.mouseFiring = false;
+        this.aiming = this.gamepadAiming;
+        this.firing = this.gamepadFiring;
       }
     });
   }
@@ -118,13 +152,14 @@ export class PlayerController {
       shotgun: [850, 60],
       rifle: [150, 25],
       sniper: [1100, 80],
+      knife: [600, 50],
     }[this.weapon];
 
     if (!stats) return;
 
     const now = performance.now();
 
-    if (now - this.lastShot < stats[0]) return;
+    if (this.lastShot !== null && now - this.lastShot < stats[0]) return;
 
     this.lastShot = now;
 
@@ -137,7 +172,38 @@ export class PlayerController {
   }
 
   update(dt) {
-    if (!this.enabled) return;
+    if (!this.enabled) {
+      this.gamepad.update();
+      return;
+    }
+
+    const pad = this.gamepad.pad();
+    const gamepadForward = this.gamepad.axis(1);
+    const gamepadSide = this.gamepad.axis(0);
+
+    if (pad) {
+      const rx = this.gamepad.axis(2);
+      const ry = this.gamepad.axis(3);
+      if (rx || ry) {
+        const sens = (this.camera.fov / 75) * settings.data.sens;
+        const turn = 2.15 * sens * dt;
+        this.yaw -= rx * turn;
+        this.pitch = clamp(this.pitch - ry * turn, -1.35, 1.35);
+      }
+
+      const rt = pad.buttons[GAMEPAD_BUTTONS.RT]?.value ?? 0;
+      const lt = pad.buttons[GAMEPAD_BUTTONS.LT]?.value ?? 0;
+      this.gamepadFiring = rt > 0.18;
+      this.gamepadAiming = lt > 0.18;
+      if (this.gamepadFiring && this.weapon !== "rifle" && this.gamepad.pressedAnalog(GAMEPAD_BUTTONS.RT)) {
+        this.tryShoot();
+      }
+    } else {
+      this.gamepadFiring = false;
+      this.gamepadAiming = false;
+    }
+    this.firing = this.mouseFiring || this.gamepadFiring;
+    this.aiming = this.mouseAiming || this.gamepadAiming;
 
     // Tir automatique du fusil d'assaut (clic maintenu).
     if (this.firing && this.weapon === "rifle") this.tryShoot();
@@ -147,8 +213,10 @@ export class PlayerController {
 
     const bind = settings.data.keys;
 
-    this.crouched = !!this.keys[bind.crouch];
-    this.sprinting = !!this.keys[bind.sprint];
+    this.crouched = !!this.keys[bind.crouch] ||
+      !!pad?.buttons[GAMEPAD_BUTTONS.EAST]?.pressed;
+    this.sprinting = !!this.keys[bind.sprint] ||
+      !!pad?.buttons[GAMEPAD_BUTTONS.L3]?.pressed;
 
     const speed = this.crouched
       ? 3
@@ -165,11 +233,13 @@ export class PlayerController {
      */
     const forward =
       (this.keys[bind.forward] ? 1 : 0) -
-      (this.keys[bind.back] ? 1 : 0);
+      (this.keys[bind.back] ? 1 : 0) -
+      gamepadForward;
 
     const side =
       (this.keys[bind.right] ? 1 : 0) -
-      (this.keys[bind.left] ? 1 : 0);
+      (this.keys[bind.left] ? 1 : 0) +
+      gamepadSide;
 
     // Normalisation pour éviter d'aller plus vite en diagonale.
     const length = Math.hypot(forward, side) || 1;
@@ -192,7 +262,10 @@ export class PlayerController {
     this.world.resolve(this.position);
 
     // Saut et gravité.
-    if (this.keys[bind.jump] && this.grounded) {
+    const jumpPressed = !!this.keys[bind.jump] ||
+      (!!pad?.buttons[GAMEPAD_BUTTONS.SOUTH]?.pressed && !this.gamepadJumpHeld);
+    this.gamepadJumpHeld = !!pad?.buttons[GAMEPAD_BUTTONS.SOUTH]?.pressed;
+    if (jumpPressed && this.grounded) {
       this.velocityY = 7.2; // permet de monter sur les bidons et caisses
       this.grounded = false;
     }
@@ -229,6 +302,7 @@ export class PlayerController {
       this.yaw,
       0
     );
+    this.gamepad.update();
   }
 
   snapshot() {

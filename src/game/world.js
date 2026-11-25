@@ -45,28 +45,105 @@ const floor = () => tex(256, (g, s) => {
   g.strokeRect(0, 0, s, s);
 });
 
+const skyTexture = () => {
+  const width = 1024, height = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const g = canvas.getContext('2d');
+
+  const gradient = g.createLinearGradient(0, 0, 0, height);
+  gradient.addColorStop(0, '#14243b');
+  gradient.addColorStop(0.24, '#2b4964');
+  gradient.addColorStop(0.43, '#8296a3');
+  gradient.addColorStop(0.52, '#d7ad8a');
+  gradient.addColorStop(0.61, '#687784');
+  gradient.addColorStop(0.8, '#354257');
+  gradient.addColorStop(1, '#18253a');
+  g.fillStyle = gradient;
+  g.fillRect(0, 0, width, height);
+
+  const sunX = width * 0.72, sunY = height * 0.52;
+  const glow = g.createRadialGradient(sunX, sunY, 0, sunX, sunY, width * 0.24);
+  glow.addColorStop(0, 'rgba(255, 213, 166, 0.48)');
+  glow.addColorStop(0.28, 'rgba(255, 173, 120, 0.2)');
+  glow.addColorStop(1, 'rgba(255, 153, 110, 0)');
+  g.fillStyle = glow;
+  g.fillRect(0, 0, width, height);
+
+  const cloudWidth = 512, cloudHeight = 256;
+  const cloudCanvas = document.createElement('canvas');
+  cloudCanvas.width = cloudWidth;
+  cloudCanvas.height = cloudHeight;
+  const cloudContext = cloudCanvas.getContext('2d');
+  const image = cloudContext.createImageData(cloudWidth, cloudHeight);
+  let seed = 0x5eed1234;
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const layers = [[5, 4, 0.52], [12, 8, 0.31], [26, 16, 0.17]].map(([cols, rows, weight]) => ({
+    cols,
+    rows,
+    weight,
+    values: Array.from({ length: cols * rows }, random)
+  }));
+  const smooth = value => value * value * (3 - 2 * value);
+  const sample = (layer, u, v) => {
+    const x = u * layer.cols, y = v * (layer.rows - 1);
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    const tx = smooth(x - x0), ty = smooth(y - y0);
+    const x1 = (x0 + 1) % layer.cols, y1 = Math.min(y0 + 1, layer.rows - 1);
+    const a = layer.values[y0 * layer.cols + x0];
+    const b = layer.values[y0 * layer.cols + x1];
+    const c = layer.values[y1 * layer.cols + x0];
+    const d = layer.values[y1 * layer.cols + x1];
+    return THREE.MathUtils.lerp(THREE.MathUtils.lerp(a, b, tx), THREE.MathUtils.lerp(c, d, tx), ty);
+  };
+
+  for (let y = 0; y < cloudHeight; y++) {
+    const v = (y + 0.5) / cloudHeight;
+    const horizon = Math.exp(-(((v - 0.51) / 0.14) ** 2));
+    const highWisps = 0.38 * Math.exp(-(((v - 0.37) / 0.065) ** 2));
+    const band = Math.min(1, horizon + highWisps);
+    const warmth = THREE.MathUtils.clamp((v - 0.42) / 0.2, 0, 1);
+    for (let x = 0; x < cloudWidth; x++) {
+      const u = x / cloudWidth;
+      const field = layers.reduce((sum, layer) => sum + sample(layer, u, v) * layer.weight, 0);
+      const density = THREE.MathUtils.clamp((field - 0.39) / 0.34, 0, 1);
+      const alpha = Math.round(density * band * 150);
+      const index = (y * cloudWidth + x) * 4;
+      image.data[index] = 192 + warmth * 48;
+      image.data[index + 1] = 211 - warmth * 17;
+      image.data[index + 2] = 226 - warmth * 48;
+      image.data[index + 3] = alpha;
+    }
+  }
+  cloudContext.putImageData(image, 0, 0);
+  g.drawImage(cloudCanvas, 0, 0, width, height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.mapping = THREE.EquirectangularReflectionMapping;
+  return texture;
+};
+
 export class World {
   constructor(scene) {
     this.scene = scene;
     this.colliders = [];
 
     // Ciel + brouillard atmosphérique
-    const sky = tex(512, (g, s) => {
-      const gr = g.createLinearGradient(0, 0, 0, s);
-      gr.addColorStop(0, '#3f6490'); gr.addColorStop(.5, '#a9bfcf'); gr.addColorStop(1, '#ead9bd');
-      g.fillStyle = gr; g.fillRect(0, 0, s, s);
-    });
-    sky.mapping = THREE.EquirectangularReflectionMapping;
-    scene.background = sky;
+    scene.background = skyTexture();
     scene.fog = new THREE.Fog(0xa9bfcf, 30, 85);
 
     // Lumières + ombres
-    scene.add(new THREE.HemisphereLight(0xdbe8f5, 0x4a4a52, 1.5));
-    const sun = new THREE.DirectionalLight(0xffe2bd, 2.6);
+    scene.add(new THREE.HemisphereLight(0xdbe8f5, 0x303743, 1.2));
+    const sun = new THREE.DirectionalLight(0xffe2bd, 2.4);
     sun.position.set(-14, 24, 10);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 70 });
+    sun.shadow.mapSize.set(1024, 1024);
+    Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 70 });
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.03;
     scene.add(sun);
@@ -111,8 +188,11 @@ export class World {
         m.position.set(x, 3.3, z);
         scene.add(m);
       });
-    [[-12, -12], [12, 12], [12, -12], [-12, 12]].forEach(([x, z]) => {
-      const l = new THREE.PointLight(0xff9a60, 12, 16, 1.6);
+    [
+      { color: 0xff925e, intensity: 18, x: -11, z: -11 },
+      { color: 0x669de0, intensity: 16, x: 11, z: 11 }
+    ].forEach(({ color, intensity, x, z }) => {
+      const l = new THREE.PointLight(color, intensity, 22, 1.8);
       l.position.set(x, 3.4, z);
       scene.add(l);
     });

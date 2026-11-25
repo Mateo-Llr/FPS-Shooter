@@ -4,7 +4,8 @@ export const MAX_PLAYERS = 16;
 export const MSG = Object.freeze({
   HELLO: 'hello', READY: 'ready', START: 'start', INPUT: 'input',
   STATE: 'state', EVENT: 'event', PING: 'ping', PONG: 'pong',
-  GAMEOVER: 'gameover', RECONNECT: 'reconnect', ROSTER: 'roster', REPLAY: 'replay'
+  GAMEOVER: 'gameover', RECONNECT: 'reconnect', ROSTER: 'roster', REPLAY: 'replay',
+  KICK: 'kick'
 });
 
 export function validMessage(message) {

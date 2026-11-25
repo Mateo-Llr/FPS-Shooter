@@ -3,7 +3,7 @@ import { createCharacter, disposeCharacter, showGun, poseIdle, SHIRT_COLORS } fr
 
 // Lobby plein écran façon Counter-Strike : la scène 3D occupe tout le fond,
 // les infos (code, statut, réglages, bouton start) sont dans deux rails latéraux.
-// API : window.clashRoster.set([{ id, name, host, me }], isHost) / set(null).
+// API : window.clashRoster.set([{ id, name, host, me }], isHost, onKick) / set(null).
 
 const CSS = `
 /* ===== Lobby plein écran ===== */
@@ -95,6 +95,86 @@ const CSS = `
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.rail-player-list {
+  display: grid;
+  gap: 5px;
+  max-height: min(42vh, 360px);
+  overflow-y: auto;
+}
+.player-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  border: 1px solid rgba(86, 102, 111, .55);
+  background: rgba(24, 34, 42, .78);
+}
+.player-row.me { border-color: rgba(240, 120, 69, .55); }
+.player-details, .player-actions, .player-badges {
+  display: flex;
+  align-items: center;
+}
+.player-details { min-width: 0; gap: 7px; }
+.player-name {
+  overflow: hidden;
+  color: #e8edef;
+  font: 700 13px 'Barlow Condensed', Arial, sans-serif;
+  letter-spacing: .04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-badges { gap: 4px; }
+.player-badge {
+  padding: 2px 4px;
+  background: #39464e;
+  color: #cbd4d8;
+  font: 800 8px Inter, Arial, sans-serif;
+  letter-spacing: .06em;
+}
+.player-badge.host { background: #f07845; color: #10151a; }
+.player-actions { gap: 4px; }
+.player-action {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-color: #42515a;
+  background: #11191f;
+  color: #dce4e7;
+  line-height: 1;
+}
+.player-action:hover:not(:disabled) { transform: none; }
+.player-action.friend-add svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.player-action.friend-add span {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #75d990;
+  color: #10151a;
+  font: 900 12px Arial, sans-serif;
+}
+.player-action.kick { color: #ff8175; font-size: 22px; }
+.player-pending {
+  color: #89979e;
+  font: 700 8px Inter, Arial, sans-serif;
+  letter-spacing: .04em;
 }
 .rail-label {
   font: 800 10px Inter, Arial, sans-serif;
@@ -195,14 +275,15 @@ const CSS = `
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const ease = t => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
-const WEAPONS = ['rifle', 'shotgun', 'sniper'];
+const WEAPONS = ['rifle', 'shotgun', 'sniper', 'knife'];
 
 export class Roster {
-  constructor() {
+  constructor(friends = null) {
     const lobby = document.querySelector('#lobby');
     if (!lobby) return;
 
     this.entries = new Map();
+    this.friends = friends;
     this.list = [];
     this.mouseX = 0;
     this.time = 0;
@@ -239,6 +320,7 @@ export class Roster {
     const displayCode  = grab('#display-code');
     const copyCode     = grab('#copy-code');
     const leaveLobby   = grab('#leave-lobby');
+    const openSettings = grab('#open-settings-lobby');
     const hostSettings = grab('#host-settings');
     const startGame    = grab('#start-game');
     const lobbyStatus  = grab('#lobby-status');
@@ -260,6 +342,10 @@ export class Roster {
     this.left.className = 'lobby-rail lobby-left';
     this.left.innerHTML = `
       <div class="rail-head"><span>SALON</span><span class="rail-count">0 / 16</span></div>
+          <div class="rail-section rail-players">
+            <div class="rail-label">JOUEURS PRÉSENTS</div>
+            <div class="rail-player-list" aria-live="polite"></div>
+          </div>
       <div class="rail-section">
         <div class="rail-label">CODE DU SALON</div>
         <div class="rail-code"></div>
@@ -282,6 +368,7 @@ export class Roster {
     if (displayCode)  codeSlot.appendChild(displayCode);
     if (copyCode)     codeSlot.appendChild(copyCode);
     if (lobbyStatus)  this.left.querySelector('.rail-status').appendChild(lobbyStatus);
+    if (openSettings) this.left.querySelector('.rail-footer').appendChild(openSettings);
     if (leaveLobby)   this.left.querySelector('.rail-footer').appendChild(leaveLobby);
     if (hostSettings) this.right.querySelector('.rail-settings').appendChild(hostSettings);
     if (startGame)    this.right.querySelector('.rail-start').appendChild(startGame);
@@ -291,6 +378,7 @@ export class Roster {
     this.tags   = this.el.querySelector('.r-tags');
     this.empty  = this.el.querySelector('.r-empty');
     this.count  = this.left.querySelector('.rail-count');
+    this.playerList = this.left.querySelector('.rail-player-list');
   }
 
   initScene() {
@@ -347,12 +435,16 @@ export class Roster {
   }
 
   /** players : [{ id, name, host, me }] ou null (salon quitté). isHost contrôle le rail droit. */
-  set(players, isHost = false) {
+  set(players, isHost = false, onKick = null) {
     if (!Array.isArray(players)) {
       this.list = [];
+      this.isHost = false;
+      this.onKick = null;
       this.right?.classList.add('hidden');
     } else {
       this.list = players.filter(Boolean).slice(0, 16);
+      this.isHost = isHost;
+      this.onKick = onKick;
       this.right?.classList.toggle('hidden', !isHost);
     }
     this.sync();
@@ -384,11 +476,78 @@ export class Roster {
     this.layout(order);
     this.count.textContent = `${order.length} / 16`;
     this.empty.style.display = order.length ? 'none' : 'grid';
+    this.renderPlayerList(order);
+  }
+
+  renderPlayerList(players) {
+    this.playerList.replaceChildren();
+    for (const player of players) {
+      const row = document.createElement('div');
+      row.className = 'player-row' + (player.me ? ' me' : '');
+
+      const details = document.createElement('div');
+      details.className = 'player-details';
+      const name = document.createElement('span');
+      name.className = 'player-name';
+      name.textContent = player.name || 'Joueur';
+      details.appendChild(name);
+
+      const badges = document.createElement('span');
+      badges.className = 'player-badges';
+      if (player.host) {
+        const host = document.createElement('span');
+        host.className = 'player-badge host';
+        host.textContent = 'HÔTE';
+        badges.appendChild(host);
+      }
+      if (player.me) {
+        const me = document.createElement('span');
+        me.className = 'player-badge';
+        me.textContent = 'TOI';
+        badges.appendChild(me);
+      }
+      details.appendChild(badges);
+      row.appendChild(details);
+
+      const actions = document.createElement('span');
+      actions.className = 'player-actions';
+      if (!player.me && player.friendCode && !player.friend && !player.pending && this.friends) {
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'player-action friend-add';
+        add.setAttribute('aria-label', `Envoyer une demande d’ami à ${player.name || 'ce joueur'}`);
+        add.title = 'Envoyer une demande d’ami';
+        add.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20v-1.5a6.5 6.5 0 0 1 13 0V20"></path></svg><span aria-hidden="true">+</span>';
+        add.onclick = () => this.friends.request(player.friendCode);
+        actions.appendChild(add);
+      } else if (player.pending) {
+        const pending = document.createElement('span');
+        pending.className = 'player-pending';
+        pending.textContent = 'DEMANDE ENVOYÉE';
+        actions.appendChild(pending);
+      }
+
+      if (this.isHost && !player.me) {
+        const kick = document.createElement('button');
+        kick.type = 'button';
+        kick.className = 'player-action kick';
+        kick.setAttribute('aria-label', `Expulser ${player.name || 'ce joueur'} du salon`);
+        kick.title = 'Expulser du salon';
+        kick.textContent = '×';
+        kick.onclick = () => this.onKick?.(player.id);
+        actions.appendChild(kick);
+      }
+      row.appendChild(actions);
+      this.playerList.appendChild(row);
+    }
   }
 
   addEntry(key, p, index) {
     const id = p.id ?? [...String(p.name)].reduce((a, c) => a + c.charCodeAt(0), 0);
-    const ch = createCharacter({ shirt: SHIRT_COLORS[id % SHIRT_COLORS.length] });
+    const ch = createCharacter({
+      shirt: SHIRT_COLORS[id % SHIRT_COLORS.length],
+      appearance: p.appearance
+    });
     showGun(ch, WEAPONS[id % WEAPONS.length]);
     ch.group.scale.setScalar(0.001);
     this.scene.add(ch.group);
