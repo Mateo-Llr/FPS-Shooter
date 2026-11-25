@@ -8,6 +8,7 @@ import { MSG, MAX_PLAYERS } from '../network/protocol.js';
 import { settings } from '../ui/settings.js';
 import { normalizeAppearance } from './customization.js';
 import { GAMEPAD_BUTTONS, GamepadState } from './gamepad.js';
+import { progress } from './progress.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -468,6 +469,7 @@ export class Game {
     document.querySelector('#lock-hint')?.classList.remove('hidden');
     this.crosshair.style.display = 'block';
     this.active = true;
+    progress.startMatch();
     this.updateHUD();
   }
 
@@ -824,6 +826,8 @@ export class Game {
     this.dead[ev.victim] = true;
     this.stats[ev.victim].d++;
     if (ev.head) this.stats[ev.killer].h++;
+    if (ev.killer === this.me) progress.record({ type: 'kill', weapon: ev.weapon, head: !!ev.head });
+    if (ev.victim === this.me) progress.record({ type: 'death' });
     const nm = i => this.nameOf(i);
 
     this.addFeed(
@@ -1064,6 +1068,12 @@ export class Game {
 
   finish(reason, title = '', winner = -1) {
     if (this.finalShown) return;
+    progress.endMatch({
+      won: winner === this.me,
+      players: this.roster.length || this.ids.length,
+      mode: this.config?.mode || 'kills',
+      aborted: false
+    });
     this.active = false;
     this.controller.enabled = false;
     this.death = null;
@@ -1212,6 +1222,7 @@ export class Game {
     const dt = raw * this.timeScale;
 
     if (this.active) {
+      progress.tickPlay(dt);
       this.updateGamepad();
       this.controller.update(dt);
 

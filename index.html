@@ -34,8 +34,10 @@
             <button class="menu-tab" type="button" data-tab="customize" aria-selected="false"><span>02</span> CUSTOMISATION</button>
             <button class="menu-tab" type="button" data-tab="friends" aria-selected="false"><span>03</span> AMIS</button>
             <button class="menu-tab" type="button" data-tab="settings" aria-selected="false"><span>04</span> PARAMÈTRES</button>
+            <button class="menu-tab" type="button" data-tab="quests" aria-selected="false"><span>05</span> QUÊTES</button>
+            <button class="menu-tab" type="button" data-tab="achievements" aria-selected="false"><span>06</span> SUCCÈS</button>
           </nav>
-          <div class="topbar-status"><i></i> OPÉRATIONNEL</div>
+          <div class="wallet" id="wallet"><span class="wallet-icon">◈</span><strong id="wallet-amount">0</strong><small>CRÉDITS</small></div>
         </header>
 
         <section class="menu-view active" data-view="play">
@@ -78,6 +80,14 @@
 
         <section class="menu-view hidden settings-view" data-view="settings">
           <div id="menu-settings-panel"></div>
+        </section>
+
+        <section class="menu-view hidden" data-view="quests">
+          <div id="quests-panel"></div>
+        </section>
+
+        <section class="menu-view hidden" data-view="achievements">
+          <div id="achievements-panel"></div>
         </section>
       </main>
 

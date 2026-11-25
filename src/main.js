@@ -1,4 +1,5 @@
 import './style.css';
+import './progress.css';
 import { Lobby } from './ui/lobby.js';
 import { Network } from './network/peer.js';
 import { Game } from './game/game.js';
@@ -7,6 +8,7 @@ import { Friends } from './ui/friends.js';
 import { SettingsUI } from './ui/settings.js';
 import { CustomizationUI } from './ui/customization.js';
 import { GamepadNavigator } from './game/gamepad.js';
+import { ProgressUI } from './ui/progress.js';
 
 const network = new Network();
 const settingsUI = new SettingsUI();
@@ -14,6 +16,11 @@ const game = new Game(document.querySelector('#game-canvas'), network);
 const friends = new Friends();
 const lobby = new Lobby(network, game, friends);
 new CustomizationUI(document.querySelector('#customization-panel'));
+new ProgressUI({
+  wallet: document.querySelector('#wallet'),
+  quests: document.querySelector('#quests-panel'),
+  achievements: document.querySelector('#achievements-panel')
+});
 
 new Roster(friends);
 lobby.init();
