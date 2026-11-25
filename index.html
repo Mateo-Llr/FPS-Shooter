@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101419" />
+    <meta name="description" content="CLASH//ROOM — Duel FPS privé entre amis." />
+    <title>CLASH//ROOM — Duel FPS</title>
+  </head>
+  <body>
+    <div id="app">
+      <main id="menu" class="screen">
+        <div class="brand"><span>CLASH</span><i>//</i><span>ROOM</span></div>
+        <p class="eyebrow">DUEL PRIVÉ · 1V1 · EN LIGNE</p>
+        <section class="panel menu-panel">
+          <label for="nickname">TON PSEUDO</label>
+          <input id="nickname" maxlength="16" autocomplete="nickname" placeholder="Joueur" />
+          <div class="menu-actions">
+            <button id="create-room" class="primary">CRÉER UN SALON</button>
+            <div class="join-row">
+              <input id="room-code" maxlength="6" placeholder="CODE À 6 CARACTÈRES" />
+              <button id="join-room">REJOINDRE</button>
+            </div>
+          </div>
+          <p id="menu-status" class="status" aria-live="polite">Prêt à jouer ? Invite un ami.</p>
+        </section>
+        <p class="footnote">NAVIGATEUR DESKTOP · CHROME / FIREFOX / EDGE / SAFARI</p>
+      </main>
+
+      <main id="lobby" class="screen hidden">
+        <div class="brand small"><span>CLASH</span><i>//</i><span>ROOM</span></div>
+        <section class="panel lobby-panel">
+          <p class="eyebrow">SALON PRIVÉ</p>
+          <h1>En attente de l'adversaire</h1>
+          <div class="room-code-wrap">
+            <span id="display-code" class="room-code">------</span>
+            <button id="copy-code" class="quiet">COPIER</button>
+          </div>
+          <p id="lobby-status" class="status">Partage ce code avec ton ami.</p>
+          <div id="host-settings">
+            <div class="settings-grid">
+              <label>CONDITION DE VICTOIRE
+                <select id="win-mode"><option value="kills">Premier à X éliminations</option><option value="time">Meilleur score au temps</option></select>
+              </label>
+              <label id="target-wrap">ÉLIMINATIONS
+                <select id="target-kills"><option>5</option><option selected>10</option><option>15</option><option>20</option></select>
+              </label>
+              <label id="duration-wrap" class="hidden">DURÉE
+                <select id="duration"><option value="120">2 minutes</option><option value="180" selected>3 minutes</option><option value="300">5 minutes</option></select>
+              </label>
+              <label>ARSENAL
+                <select id="weapon-rule"><option value="all">Toutes les armes</option><option value="shotgun">Fusil à pompe uniquement</option><option value="rifle">Fusil d'assaut uniquement</option><option value="sniper">Sniper uniquement</option></select>
+              </label>
+            </div>
+            <button id="start-game" class="primary wide" disabled>LANCER LA PARTIE</button>
+          </div>
+          <p class="footnote">L'hôte configure les règles. La partie commence lorsque les deux joueurs sont connectés.</p>
+          <button id="leave-lobby" class="quiet">QUITTER LE SALON</button>
+        </section>
+      </main>
+
+      <main id="game" class="hidden">
+        <canvas id="game-canvas"></canvas>
+        <div id="hud" class="hidden">
+          <div class="top-hud">
+            <div class="player-score"><span id="you-name">TOI</span><strong id="you-score">0</strong></div>
+            <div class="match-clock"><strong id="timer">03:00</strong><small id="match-mode">PREMIER À 10</small></div>
+            <div class="player-score opponent"><span id="enemy-name">ADVERSAIRE</span><strong id="enemy-score">0</strong></div>
+          </div>
+          <div class="crosshair"><span></span><i></i></div>
+          <div class="bottom-hud">
+            <div class="health-block"><small>SANTÉ</small><strong id="health">100</strong><div class="health-track"><span id="health-fill"></span></div></div>
+            <div class="weapon-block"><small id="weapon-name">FUSIL D'ASSAUT</small><strong><span id="ammo">30</span><em> / ∞</em></strong><small>R : RECHARGER · 1/2/3 : ARME</small></div>
+          </div>
+          <div id="game-message" class="game-message hidden"></div>
+          <div id="lock-hint">CLIQUE DANS LE JEU POUR VERROUILLER LA SOURIS</div>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
