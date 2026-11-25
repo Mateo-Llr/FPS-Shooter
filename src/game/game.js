@@ -54,7 +54,24 @@ background:radial-gradient(ellipse at center,rgba(40,0,0,.15),rgba(30,0,0,.8));b
 #game-crosshair.hit{transform:translate(-50%,-50%) scale(1.6)!important}
 #scope{position:fixed;inset:0;z-index:15;pointer-events:none;opacity:0;
 background:linear-gradient(#000,#000) center/1px 62vmin no-repeat,linear-gradient(#000,#000) center/62vmin 1px no-repeat,
-radial-gradient(circle at center,transparent 0,transparent 31vmin,#000 31.3vmin)}`;
+radial-gradient(circle at center,transparent 0,transparent 31vmin,#000 31.3vmin)}
+#scoreboard{position:fixed;inset:0;z-index:70;display:none;align-items:center;justify-content:center;pointer-events:none;background:rgba(5,8,11,.55)}
+#scoreboard.show{display:flex;animation:sb-in .2s ease}
+#scoreboard.final{pointer-events:auto;background:rgba(5,8,11,.82);backdrop-filter:blur(4px)}
+@keyframes sb-in{from{opacity:0}to{opacity:1}}
+.sb-panel{width:min(94vw,680px);background:linear-gradient(145deg,rgba(35,46,54,.97),rgba(13,19,24,.98));border:1px solid #45545d;border-top:3px solid #f07845;padding:26px 30px;text-align:center;box-shadow:0 25px 90px #000a}
+.sb-title{font:900 58px/1 'Barlow Condensed',Arial,sans-serif;letter-spacing:.16em}
+.sb-title.win{color:#7fe08a}.sb-title.lose{color:#ff5a4a}.sb-title.draw{color:#ffc46b}.sb-title.info{color:#eef1f2}
+.sb-sub{font:700 15px 'Barlow Condensed',Arial,sans-serif;letter-spacing:.2em;color:#9caab2;margin:6px 0 20px}
+.sb-panel table{width:100%;border-collapse:collapse;font:700 20px 'Barlow Condensed',Arial,sans-serif}
+.sb-panel th{font-size:12px;letter-spacing:.18em;color:#8a98a0;padding:6px 10px;text-align:center;border-bottom:1px solid #46545b}
+.sb-panel td{padding:12px 10px;text-align:center;border-bottom:1px solid #2a363d;font-variant-numeric:tabular-nums}
+.sb-panel td:nth-child(2),.sb-panel th:nth-child(2){text-align:left}
+.sb-panel tr.me td{background:rgba(240,120,69,.14);color:#ffb487}
+.sb-panel tr.top td:nth-child(3){color:#7fe08a}
+.sb-panel em{font:800 10px Inter,Arial,sans-serif;letter-spacing:.14em;background:#f07845;color:#10151a;padding:2px 6px;margin-left:8px;font-style:normal}
+.sb-hint{margin-top:16px;font:600 11px Inter,Arial,sans-serif;letter-spacing:.16em;color:#7d8b92}
+#sb-menu{margin-top:24px;width:100%}`;
 
 export class Game {
   constructor(canvas, network) {
@@ -111,6 +128,9 @@ export class Game {
     this.bobT = 0;
     this.reloadK = 0;
     this.ads = 0;
+    this.stats = [{ d: 0, h: 0 }, { d: 0, h: 0 }];
+    this.finalShown = false;
+    this.sbHeld = false;
     this.weaponRecoil = 0;
     this.hitmarkerUntil = 0;
     this.netAcc = 0;
@@ -279,6 +299,7 @@ export class Game {
     this.bannerEl = add('banner', '<b></b><small></small>');
     this.vignetteEl = add('vignette');
     this.scopeEl = add('scope');
+    this.sbEl = add('scoreboard');
     this.deathEl = add('death-screen', '<div class="t">ÉLIMINÉ</div><div class="s"></div><div class="c"></div>');
   }
 
@@ -386,6 +407,9 @@ export class Game {
     this.clockValue = config.mode === 'time' ? config.duration : 0;
     this.over = false;
     this.endAt = 0;
+    this.stats = [{ d: 0, h: 0 }, { d: 0, h: 0 }];
+    this.finalShown = false;
+    this.hideScoreboard();
     this.death = null;
     this.enemyDead = null;
     this.disconnectDeadline = null;
@@ -441,6 +465,18 @@ export class Game {
       if (e.code === 'KeyR') this.weapon.reload();
     });
     this.controller.onShoot = () => this.shoot();
+
+    // Tab maintenu : scoreboard en cours de partie
+    document.addEventListener('keydown', e => {
+      if (e.code !== 'Tab') return;
+      e.preventDefault();
+      if (this.active) this.sbHeld = true;
+    });
+    document.addEventListener('keyup', e => {
+      if (e.code !== 'Tab' || this.finalShown) return;
+      this.sbHeld = false;
+      this.hideScoreboard();
+    });
   }
 
   chooseWeapon(name, force = false) {
@@ -710,6 +746,8 @@ export class Game {
   onKill(ev) {
     this.score = ev.score;
     this.dead[ev.victim] = true;
+    this.stats[ev.victim].d++;
+    if (ev.head) this.stats[ev.killer].h++;
     const nm = i => (i === this.me ? this.youName : this.enemyName);
 
     const item = document.createElement('div');
@@ -922,17 +960,63 @@ export class Game {
     this.finish(reason);
   }
 
-  finish(reason) {
+  finish(reason, title = '') {
+    if (this.finalShown) return;
     this.active = false;
     this.controller.enabled = false;
     this.death = null;
+    this.sbHeld = false;
     this.deathEl.classList.remove('show');
     this.deathEl.style.display = 'none';
     this.weaponModel.visible = true;
     document.exitPointerLock?.();
     this.scopeEl.style.opacity = 0;
     this.crosshair.style.display = 'none';
-    this.hud.message(`${reason} — ${this.score[this.me]} / ${this.score[1 - this.me]}. Recharge la page pour revenir au menu.`);
+    this.hud.clearMessage();
+    this.finalShown = true;
+    this.showScoreboard(true, reason, title);
+  }
+
+  // ============ SCOREBOARD ============
+
+  showScoreboard(final = false, reason = '', title = '') {
+    const me = this.me, foe = 1 - me;
+    const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const name = i => (i === me ? this.youName : this.enemyName) || 'Joueur';
+    const order = [0, 1].sort((a, b) => this.score[b] - this.score[a] || this.stats[a].d - this.stats[b].d);
+    const diff = this.score[me] - this.score[foe];
+
+    let label = 'SCOREBOARD', cls = 'info';
+    if (final) {
+      label = title || (/forfait/i.test(reason) || diff > 0 ? 'VICTOIRE' : diff < 0 ? 'DÉFAITE' : 'ÉGALITÉ');
+      cls = title ? 'lose' : label === 'VICTOIRE' ? 'win' : label === 'DÉFAITE' ? 'lose' : 'draw';
+    }
+
+    const rows = order.map((i, r) => {
+      const d = this.stats[i].d, k = this.score[i];
+      const topClass = r === 0 && this.score[0] !== this.score[1] ? ' top' : '';
+      return `<tr class="${i === me ? 'me' : ''}${topClass}"><td>${r + 1}</td>` +
+        `<td>${esc(name(i))}${i === 0 ? '<em>HÔTE</em>' : ''}</td>` +
+        `<td>${k}</td><td>${d}</td><td>${(d ? k / d : k).toFixed(2)}</td><td>${this.stats[i].h}</td></tr>`;
+    }).join('');
+
+    const mode = this.config?.mode === 'time' ? 'MEILLEUR SCORE AU TEMPS' : `PREMIER À ${this.config?.target}`;
+    this.sbEl.innerHTML = `<div class="sb-panel">
+      <div class="sb-title ${cls}">${label}</div>
+      <div class="sb-sub">${esc(final ? reason : mode)}</div>
+      <table><thead><tr><th>#</th><th>JOUEUR</th><th>ÉLIMS</th><th>MORTS</th><th>K/D</th><th>TÊTES</th></tr></thead><tbody>${rows}</tbody></table>
+      ${final ? '<button id="sb-menu" class="primary">RETOUR AU MENU PRINCIPAL</button>' : '<div class="sb-hint">RELÂCHE TAB POUR FERMER</div>'}
+    </div>`;
+    this.sbEl.classList.toggle('final', final);
+    this.sbEl.classList.add('show');
+    if (final) {
+      // Repart sur un menu propre : ferme la connexion (beforeunload) et recharge l'application.
+      this.sbEl.querySelector('#sb-menu').onclick = () => location.reload();
+    }
+  }
+
+  hideScoreboard() {
+    this.sbEl.classList.remove('show', 'final');
   }
 
   remoteDisconnected() {
@@ -942,7 +1026,7 @@ export class Game {
       this.hud.message('Adversaire déconnecté — reconnexion pendant 30 secondes…');
       this.disconnectDeadline = performance.now() + 30000;
     } else {
-      this.hud.message('Connexion perdue. Retourne au salon et réessaie.');
+      this.finish('Connexion perdue avec l’hôte', 'CONNEXION PERDUE');
     }
   }
 
@@ -1010,6 +1094,7 @@ export class Game {
       this.updateRemote(dt);
       this.updateWeaponAnimation(dt);
       this.updateFx(dt);
+      if (this.sbHeld && !this.finalShown) this.showScoreboard(false);
       this.updateHUD();
     }
 
