@@ -169,6 +169,7 @@ export class World {
     p.x = Math.max(-18.8, Math.min(18.8, p.x));
     p.z = Math.max(-18.8, Math.min(18.8, p.z));
     for (const c of this.colliders) {
+      if (c.box.max.y <= p.y + 0.1) continue; // on est au-dessus : pas de collision latérale
       const nx = Math.max(c.x - c.hw - .42, Math.min(c.x + c.hw + .42, p.x));
       const nz = Math.max(c.z - c.hd - .42, Math.min(c.z + c.hd + .42, p.z));
       const dx = p.x - nx, dz = p.z - nz;
@@ -177,6 +178,16 @@ export class World {
         else p.z = nz + Math.sign(dz || 1) * .43;
       }
     }
+  }
+
+  /** Hauteur du sol sous le joueur : 0, ou le dessus d'un obstacle franchissable. */
+  floorAt(p) {
+    let h = 0;
+    for (const c of this.colliders) {
+      const top = c.box.max.y;
+      if (top > h && top <= p.y + 0.35 && Math.abs(p.x - c.x) < c.hw + 0.15 && Math.abs(p.z - c.z) < c.hd + 0.15) h = top;
+    }
+    return h;
   }
 
   /** Distance jusqu'au premier obstacle (mur, caisse, sol) le long d'un rayon. */

@@ -51,7 +51,10 @@ background:radial-gradient(ellipse at center,rgba(40,0,0,.15),rgba(30,0,0,.8));b
 #death-screen .t{font:900 76px 'Barlow Condensed',Arial,sans-serif;letter-spacing:.18em;color:#ff4a3c;text-shadow:0 4px 30px #000}
 #death-screen .s{font:700 20px 'Barlow Condensed',Arial,sans-serif;letter-spacing:.16em;color:#eee}
 #death-screen .c{margin-top:14px;font:800 30px 'Barlow Condensed',Arial,sans-serif;color:#ffb487;letter-spacing:.1em}
-#game-crosshair.hit{transform:translate(-50%,-50%) scale(1.6)!important}`;
+#game-crosshair.hit{transform:translate(-50%,-50%) scale(1.6)!important}
+#scope{position:fixed;inset:0;z-index:15;pointer-events:none;opacity:0;
+background:linear-gradient(#000,#000) center/1px 62vmin no-repeat,linear-gradient(#000,#000) center/62vmin 1px no-repeat,
+radial-gradient(circle at center,transparent 0,transparent 31vmin,#000 31.3vmin)}`;
 
 export class Game {
   constructor(canvas, network) {
@@ -107,6 +110,7 @@ export class Game {
     this.lastPos = { x: 0, z: 0 };
     this.bobT = 0;
     this.reloadK = 0;
+    this.ads = 0;
     this.weaponRecoil = 0;
     this.hitmarkerUntil = 0;
     this.netAcc = 0;
@@ -157,34 +161,74 @@ export class Game {
       box(l, [0.27, 0.16, 0.39], shoes, 0, -0.7, -0.035);
       this.remoteLegs.push(l);
     });
-    box(g, [0.07, 0.1, 0.6], gun, 0.39, 1.25, -0.4);
+    this.enemyGuns = {};
+    for (const t of ['shotgun', 'rifle', 'sniper']) {
+      const m = this.gunModel(t);
+      m.scale.setScalar(0.7);
+      m.position.set(0.2, 1.28, -0.3);
+      g.add(m);
+      this.enemyGuns[t] = m;
+    }
 
     g.traverse(o => { o.castShadow = true; });
     this.enemyMesh = g;
     this.scene.add(g);
   }
 
+  gunModel(t) {
+    const mat = (c, m, r) => new THREE.MeshStandardMaterial({ color: c, metalness: m, roughness: r });
+    const metal = mat(0x202832, 0.75, 0.3), black = mat(0x10151c, 0.4, 0.55), accent = mat(0xd85b32, 0.25, 0.45),
+      wood = mat(0x6b4425, 0.1, 0.7), green = mat(0x2d3a2e, 0.3, 0.6);
+    const G = new THREE.Group();
+    const cyl = (r, len, m, y, z) => {
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), m);
+      c.rotation.x = Math.PI / 2;
+      c.position.set(0, y, z);
+      G.add(c);
+    };
+    if (t === 'shotgun') {
+      box(G, [0.22, 0.18, 0.5], metal, 0, 0, 0);
+      cyl(0.06, 0.85, black, 0.04, -0.62);
+      cyl(0.045, 0.7, metal, -0.06, -0.55);
+      box(G, [0.15, 0.13, 0.3], wood, 0, -0.06, -0.45);
+      box(G, [0.18, 0.2, 0.42], wood, 0, -0.02, 0.45);
+      box(G, [0.12, 0.25, 0.15], wood, 0, -0.18, 0.14);
+      G.userData.muzzle = -1.05;
+    } else if (t === 'sniper') {
+      box(G, [0.18, 0.17, 0.8], metal, 0, 0, 0);
+      cyl(0.032, 1.1, black, 0.03, -0.85);
+      cyl(0.065, 0.42, black, 0.17, -0.1);
+      cyl(0.078, 0.06, accent, 0.17, -0.33);
+      box(G, [0.17, 0.22, 0.5], green, 0, -0.02, 0.6);
+      box(G, [0.12, 0.25, 0.15], black, 0, -0.18, 0.2);
+      box(G, [0.1, 0.2, 0.12], black, 0, -0.17, -0.1);
+      G.userData.muzzle = -1.4;
+    } else {
+      box(G, [0.24, 0.2, 0.62], metal, 0, 0, 0);
+      cyl(0.05, 0.7, black, 0.045, -0.56);
+      box(G, [0.19, 0.16, 0.34], black, 0, -0.015, 0.43);
+      box(G, [0.12, 0.27, 0.16], black, 0, -0.19, 0.13).rotation.x = -0.18;
+      box(G, [0.12, 0.08, 0.18], accent, 0, 0.14, -0.13);
+      box(G, [0.055, 0.12, 0.06], black, 0, 0.23, -0.13);
+      box(G, [0.12, 0.19, 0.13], black, 0, -0.14, -0.35);
+      box(G, [0.1, 0.3, 0.12], accent, 0, -0.22, -0.02);
+      G.userData.muzzle = -0.93;
+    }
+    return G;
+  }
+
   buildWeaponView() {
     const W = new THREE.Group();
-    const mat = (c, m, r) => new THREE.MeshStandardMaterial({ color: c, metalness: m, roughness: r });
-    const metal = mat(0x202832, 0.75, 0.3), black = mat(0x10151c, 0.4, 0.55), accent = mat(0xd85b32, 0.25, 0.45);
-    const skin = mat(0xc28e70, 0, 0.85);
-
-    box(W, [0.24, 0.2, 0.62], metal, 0, 0, 0);
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.7, 10), black);
-    barrel.rotation.x = Math.PI / 2;
-    barrel.position.set(0, 0.045, -0.56);
-    W.add(barrel);
-    box(W, [0.19, 0.16, 0.34], black, 0, -0.015, 0.43);
-    box(W, [0.12, 0.27, 0.16], black, 0, -0.19, 0.13).rotation.x = -0.18;
-    box(W, [0.12, 0.08, 0.18], accent, 0, 0.14, -0.13);
-    box(W, [0.055, 0.12, 0.06], black, 0, 0.23, -0.13);
-    box(W, [0.12, 0.19, 0.13], black, 0, -0.14, -0.35);
+    this.guns = {};
+    for (const t of ['shotgun', 'rifle', 'sniper']) {
+      this.guns[t] = this.gunModel(t);
+      W.add(this.guns[t]);
+    }
+    const skin = new THREE.MeshStandardMaterial({ color: 0xc28e70, roughness: 0.85 });
     box(W, [0.19, 0.14, 0.24], skin, 0.19, -0.22, 0.08);
     box(W, [0.17, 0.13, 0.2], skin, -0.13, -0.16, -0.35);
 
     W.position.set(0.34, -0.31, -0.65);
-    W.rotation.set(-0.035, -0.045, -0.025);
     this.camera.add(W);
     this.weaponModel = W;
 
@@ -234,6 +278,7 @@ export class Game {
     this.feedEl = add('kill-feed');
     this.bannerEl = add('banner', '<b></b><small></small>');
     this.vignetteEl = add('vignette');
+    this.scopeEl = add('scope');
     this.deathEl = add('death-screen', '<div class="t">ÉLIMINÉ</div><div class="s"></div><div class="c"></div>');
   }
 
@@ -358,6 +403,8 @@ export class Game {
     this.controller.pitch = 0;
     this.controller.velocityY = 0;
     this.controller.firing = false;
+    this.controller.aiming = false;
+    this.ads = 0;
     this.controller.enabled = true;
     this.lastPos = { x: mine.x, z: mine.z };
 
@@ -411,17 +458,17 @@ export class Game {
     const w = this.weapon.current;
     const { yaw, pitch } = this.controller;
     const base = V(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
-    const moving = this.moveSpeed > 0.8, air = !this.controller.grounded;
-    const spread =
-      { shotgun: 0.05, rifle: 0.008, sniper: 0.0 }[w] +
-      (moving ? { shotgun: 0.01, rifle: 0.02, sniper: 0.09 }[w] : 0) +
-      (air ? 0.04 : 0) - (this.controller.crouched ? 0.004 : 0);
+    const moving = this.moveSpeed > 0.8, air = !this.controller.grounded, a = this.ads > 0.6;
+    const hip = { shotgun: 0.03, rifle: 0.012, sniper: 0.05 }[w], aim = { shotgun: 0.01, rifle: 0.002, sniper: 0 }[w];
+    const spread = (a ? aim : hip) + (moving ? { shotgun: 0.006, rifle: 0.02, sniper: a ? 0.03 : 0.06 }[w] : 0) + (air ? 0.04 : 0);
     const n = w === 'shotgun' ? 8 : 1;
-
+    // Plombs répartis dans un petit disque autour du curseur (1er plomb au centre)
+    const right = V(Math.cos(yaw), 0, -Math.sin(yaw)), up = new THREE.Vector3().crossVectors(right, base).normalize();
     const o = this.camera.position;
     const dirs = [];
     for (let i = 0; i < n; i++) {
-      const d = base.clone().add(V(rnd(), rnd(), rnd()).multiplyScalar(Math.max(0, spread))).normalize();
+      const r = i === 0 ? 0 : Math.sqrt(Math.random()) * spread, t = Math.random() * Math.PI * 2;
+      const d = base.clone().addScaledVector(right, Math.cos(t) * r).addScaledVector(up, Math.sin(t) * r).normalize();
       dirs.push([d.x, d.y, d.z]);
     }
     const shot = { weapon: w, o: [o.x, o.y, o.z], d: dirs };
@@ -429,7 +476,7 @@ export class Game {
     this.renderShot(shot, true);
 
     // Recul de la visée
-    const kick = { shotgun: 0.05, rifle: 0.009, sniper: 0.06 }[w];
+    const kick = { shotgun: 0.05, rifle: 0.009, sniper: 0.06 }[w] * (a ? 0.6 : 1);
     this.controller.pitch += kick;
     this.controller.yaw += rnd() * kick * 0.5;
     this.weaponRecoil = 1;
@@ -718,7 +765,7 @@ export class Game {
     const p = this.controller.position;
     this.controller.enabled = false;
     this.controller.firing = false;
-    this.weaponModel.visible = false;
+    this.controller.aiming = false;
     this.crosshair.style.display = 'none';
     this.death = {
       t: 0,
@@ -813,6 +860,8 @@ export class Game {
     }
     m.position.y = r.y;
     m.scale.y = lerp(m.scale.y, r.crouch ? 0.78 : 1, k);
+    const ew = n.w || 'rifle';
+    for (const t in this.enemyGuns) this.enemyGuns[t].visible = t === ew;
 
     if (this.remoteMoving) this.remoteWalkTime += dt * 10;
     const swing = this.remoteMoving ? Math.sin(this.remoteWalkTime) * 0.55 : 0;
@@ -832,14 +881,19 @@ export class Game {
     const reload = this.weapon.isReloading() ? 1 : 0;
     this.reloadK = lerp(this.reloadK, reload, Math.min(1, dt * 9));
 
+    const a = this.ads, cur = this.weapon.current;
+    for (const t in this.guns) this.guns[t].visible = t === cur;
+    W.visible = !this.death && !(cur === 'sniper' && a > 0.6);
+    const mz = this.guns[cur].userData.muzzle;
+    this.muzzleFlash.position.z = mz - 0.05;
+    this.muzzleLight.position.z = mz + 0.1;
+    const bob = (1 - a) * mv;
     W.position.set(
-      0.34 + Math.sin(this.bobT) * 0.008 * mv,
-      -0.31 - r * 0.06 - this.reloadK * 0.22 + Math.abs(Math.cos(this.bobT)) * 0.008 * mv,
-      -0.65 + r * 0.12
+      lerp(0.34, 0, a) + Math.sin(this.bobT) * 0.008 * bob,
+      lerp(-0.31, -0.26, a) - r * 0.06 - this.reloadK * 0.22 + Math.abs(Math.cos(this.bobT)) * 0.008 * bob,
+      lerp(-0.65, -0.55, a) + r * 0.12
     );
-    W.rotation.set(-0.035 + r * 0.12 - this.reloadK * 0.5, -0.045, -0.025 + this.reloadK * 0.5);
-    const target = { shotgun: 0.85, rifle: 1, sniper: 1.2 }[this.weapon.current] ?? 1;
-    W.scale.z = lerp(W.scale.z, target, Math.min(1, dt * 10));
+    W.rotation.set(-0.035 * (1 - a) + r * 0.1 - this.reloadK * 0.5, -0.045 * (1 - a), (-0.025 + this.reloadK * 0.5) * (1 - a));
 
     this.muzzleFlash.material.opacity = Math.max(0, this.muzzleFlash.material.opacity - dt * 16);
     this.muzzleLight.intensity = Math.max(0, this.muzzleLight.intensity - dt * 60);
@@ -876,6 +930,7 @@ export class Game {
     this.deathEl.style.display = 'none';
     this.weaponModel.visible = true;
     document.exitPointerLock?.();
+    this.scopeEl.style.opacity = 0;
     this.crosshair.style.display = 'none';
     this.hud.message(`${reason} — ${this.score[this.me]} / ${this.score[1 - this.me]}. Recharge la page pour revenir au menu.`);
   }
@@ -922,7 +977,15 @@ export class Game {
         this.shake = Math.max(0, this.shake - raw * 0.12);
       }
       this.fovPunch = lerp(this.fovPunch, 0, Math.min(1, raw * 6));
-      const baseFov = this.controller.sprinting && this.moveSpeed > 3 ? 82 : 75;
+      // Visée (clic droit) : zoom, lunette du sniper
+      const wn = this.weapon.current;
+      const aimWanted = this.controller.aiming && this.controller.enabled && !this.death;
+      this.ads = lerp(this.ads, aimWanted ? 1 : 0, Math.min(1, raw * 10));
+      const scoped = wn === 'sniper' ? Math.max(0, (this.ads - 0.6) / 0.4) : 0;
+      this.scopeEl.style.opacity = scoped;
+      this.crosshair.style.opacity = scoped > 0.5 ? 0 : 1;
+      const adsFov = { shotgun: 62, rifle: 58, sniper: 20 }[wn];
+      const baseFov = lerp(this.controller.sprinting && this.moveSpeed > 3 ? 82 : 75, adsFov, this.ads);
       this.camera.fov = lerp(this.camera.fov, baseFov + this.fovPunch, Math.min(1, raw * 8));
       this.camera.updateProjectionMatrix();
 

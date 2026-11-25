@@ -28,6 +28,8 @@ export class PlayerController {
     this.weapon = "rifle";
 
     this.firing = false;
+    this.aiming = false;
+    this.camHeight = 1.68;
     this.bind();
   }
 
@@ -69,10 +71,11 @@ export class PlayerController {
         return;
       }
 
-      this.yaw -= e.movementX * 0.0022;
+      const sens = this.camera.fov / 75; // sensibilité réduite quand on zoome
+      this.yaw -= e.movementX * 0.0022 * sens;
 
       this.pitch = clamp(
-        this.pitch - e.movementY * 0.0022,
+        this.pitch - e.movementY * 0.0022 * sens,
         -1.35,
         1.35
       );
@@ -89,7 +92,14 @@ export class PlayerController {
       }
     });
 
+    document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    document.addEventListener("mousedown", (e) => {
+      if (e.button === 2 && this.enabled && document.pointerLockElement === this.canvas) this.aiming = true;
+    });
+
     document.addEventListener("mouseup", (e) => {
+      if (e.button === 2) this.aiming = false;
       if (e.button === 0) this.firing = false;
     });
 
@@ -180,28 +190,35 @@ export class PlayerController {
       -Math.cos(this.yaw) * f -
       Math.sin(this.yaw) * s;
 
-    this.position.x += dx * speed * dt;
-    this.position.z += dz * speed * dt;
+    this.position.x += dx * speed * (this.aiming ? 0.6 : 1) * dt;
+    this.position.z += dz * speed * (this.aiming ? 0.6 : 1) * dt;
 
     this.world.resolve(this.position);
 
     // Saut et gravité.
     if (this.keys.Space && this.grounded) {
-      this.velocityY = 6.4;
+      this.velocityY = 7.2; // permet de monter sur les bidons et caisses
       this.grounded = false;
     }
 
     this.velocityY -= 18 * dt;
     this.position.y += this.velocityY * dt;
 
-    if (this.position.y <= 0) {
-      this.position.y = 0;
+    // Sol ou sommet d'un obstacle (bidon, caisse) sous les pieds.
+    const floor = this.world.floorAt ? this.world.floorAt(this.position) : 0;
+    this.grounded = false;
+
+    if (this.position.y <= floor && this.velocityY <= 0) {
+      this.position.y = floor;
       this.velocityY = 0;
       this.grounded = true;
     }
 
     // Position de la caméra FPS.
-    const cameraHeight = this.crouched ? 1.05 : 1.55;
+    // Hauteur des yeux (modèle : tête à ~1.72) avec transition douce accroupi/debout.
+    const targetHeight = this.crouched ? 1.28 : 1.68;
+    this.camHeight += (targetHeight - this.camHeight) * Math.min(1, dt * 10);
+    const cameraHeight = this.camHeight;
 
     this.camera.position.set(
       this.position.x,
