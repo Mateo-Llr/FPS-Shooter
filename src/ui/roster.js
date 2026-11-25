@@ -1,24 +1,197 @@
 import * as THREE from 'three';
 import { createCharacter, disposeCharacter, showGun, poseIdle, SHIRT_COLORS } from '../game/character.js';
 
-// Lobby 3D façon Counter-Strike : les joueurs du salon sont debout sur une scène,
-// avec leur pseudo au-dessus de la tête. API : window.clashRoster.set([{ id, name, host, me }]) / set(null).
+// Lobby plein écran façon Counter-Strike : la scène 3D occupe tout le fond,
+// les infos (code, statut, réglages, bouton start) sont dans deux rails latéraux.
+// API : window.clashRoster.set([{ id, name, host, me }], isHost) / set(null).
 
 const CSS = `
-#roster{margin:6px 0 22px;border:1px solid #39464e;background:#0f161b}
-#roster .r-head{display:flex;justify-content:space-between;padding:8px 14px;font:800 11px Inter,Arial,sans-serif;letter-spacing:.2em;color:#8a98a0;border-bottom:1px solid #39464e}
-#roster .r-stage{position:relative;height:300px;overflow:hidden;
-  background:radial-gradient(ellipse at 50% 85%,rgba(240,120,69,.22),transparent 60%),linear-gradient(#18222a,#0b1014)}
-#roster canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-#roster .r-tags{position:absolute;inset:0;pointer-events:none}
-#roster .r3d-tag{position:absolute;left:0;top:0;white-space:nowrap;display:flex;align-items:center;gap:6px;
-  background:rgba(10,15,20,.82);border-bottom:2px solid #4a5a64;padding:3px 9px;
-  font:800 17px 'Barlow Condensed',Arial,sans-serif;letter-spacing:.06em;color:#eef1f2;will-change:transform;opacity:0;transition:opacity .3s}
-#roster .r3d-tag.me{border-bottom-color:#f07845;color:#ffb487}
-#roster .r-tag{font:800 9px Inter,Arial,sans-serif;letter-spacing:.14em;padding:2px 5px;background:#f07845;color:#10151a}
-#roster .r-tag.you{background:#3a4b55;color:#e6ecef}
-#roster .r-empty{position:absolute;inset:0;display:grid;place-items:center;color:#5d6b72;font:600 13px Inter,Arial,sans-serif;letter-spacing:.14em;pointer-events:none}
-@media (max-width:600px){#roster .r-stage{height:230px}}`;
+/* ===== Lobby plein écran ===== */
+#lobby.lobby-fs {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 100;
+  padding: 0 !important;
+  border: 0 !important;
+  background: #0b1014;
+  overflow: hidden;
+}
+
+/* Scène 3D = fond plein cadre */
+#lobby.lobby-fs #roster {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse at 50% 78%, rgba(240,120,69,.20), transparent 55%),
+    linear-gradient(#18222a, #0b1014);
+}
+#lobby.lobby-fs #roster canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+#roster .r-tags {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+#roster .r-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #5d6b72;
+  font: 600 13px Inter, Arial, sans-serif;
+  letter-spacing: .18em;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Rails latéraux en verre dépoli */
+.lobby-rail {
+  position: absolute;
+  top: 24px;
+  z-index: 10;
+  width: 300px;
+  max-height: calc(100vh - 48px);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  background: rgba(15, 22, 27, .82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid #39464e;
+  box-shadow: 0 20px 60px rgba(0,0,0,.55);
+}
+.lobby-rail.hidden { display: none; }
+.lobby-left  { left: 24px; }
+.lobby-right { right: 24px; }
+
+.rail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #39464e;
+  font: 800 11px Inter, Arial, sans-serif;
+  letter-spacing: .2em;
+  color: #8a98a0;
+}
+.rail-count {
+  color: #f07845;
+  font: 800 14px 'Barlow Condensed', Arial, sans-serif;
+  letter-spacing: .1em;
+}
+.rail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rail-label {
+  font: 800 10px Inter, Arial, sans-serif;
+  letter-spacing: .18em;
+  color: #5d6b72;
+}
+
+.rail-code {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.rail-code #display-code {
+  flex: 1;
+  padding: 8px 12px;
+  background: #18222a;
+  border: 1px solid #39464e;
+  font: 800 22px 'Barlow Condensed', Arial, sans-serif;
+  letter-spacing: .18em;
+  color: #eef1f2;
+  text-align: center;
+}
+.rail-status #lobby-status {
+  font: 500 12px Inter, Arial, sans-serif;
+  line-height: 1.5;
+  color: #8a98a0;
+  min-height: 1.5em;
+}
+.rail-footer { margin-top: auto; }
+.rail-footer #leave-lobby { width: 100%; }
+
+.rail-settings { flex: 1; }
+.rail-start { margin-top: auto; }
+.rail-start #start-game {
+  width: 100%;
+  padding: 12px 14px;
+  font: 800 14px 'Barlow Condensed', Arial, sans-serif;
+  letter-spacing: .14em;
+}
+
+/* Étiquettes 3D au-dessus des têtes */
+#roster .r3d-tag {
+  position: absolute;
+  left: 0; top: 0;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(10,15,20,.85);
+  border-bottom: 2px solid #4a5a64;
+  padding: 3px 9px;
+  font: 800 18px 'Barlow Condensed', Arial, sans-serif;
+  letter-spacing: .06em;
+  color: #eef1f2;
+  will-change: transform;
+  opacity: 0;
+  transition: opacity .3s;
+}
+#roster .r3d-tag.me {
+  border-bottom-color: #f07845;
+  color: #ffb487;
+}
+#roster .r-tag {
+  font: 800 9px Inter, Arial, sans-serif;
+  letter-spacing: .14em;
+  padding: 2px 5px;
+  background: #f07845;
+  color: #10151a;
+}
+#roster .r-tag.you {
+  background: #3a4b55;
+  color: #e6ecef;
+}
+
+@media (max-width: 860px) {
+  .lobby-rail {
+    width: 240px;
+    top: 12px;
+    padding: 12px;
+    max-height: calc(100vh - 24px);
+  }
+  .lobby-left  { left: 12px; }
+  .lobby-right { right: 12px; }
+  .rail-code #display-code { font-size: 18px; }
+}
+
+@media (max-width: 640px) {
+  .lobby-rail {
+    width: auto;
+    left: 8px;
+    right: 8px;
+    max-height: 34vh;
+  }
+  .lobby-left  { top: 8px;  bottom: auto; }
+  .lobby-right { bottom: 8px; top: auto; }
+}
+`;
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const ease = t => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
@@ -26,36 +199,17 @@ const WEAPONS = ['rifle', 'shotgun', 'sniper'];
 
 export class Roster {
   constructor() {
-    const panel = document.querySelector('#lobby .lobby-panel');
-    const ref = document.querySelector('#host-settings');
-    if (!panel || !ref) return;
-
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    document.head.appendChild(style);
-
-    this.el = document.createElement('div');
-    this.el.id = 'roster';
-    this.el.innerHTML = `
-      <div class="r-head"><span>JOUEURS</span><span class="r-count">0 / 16</span></div>
-      <div class="r-stage">
-        <canvas></canvas>
-        <div class="r-tags"></div>
-        <div class="r-empty">EN ATTENTE DES JOUEURS…</div>
-      </div>`;
-    panel.insertBefore(this.el, ref);
-
-    this.stage = this.el.querySelector('.r-stage');
-    this.canvas = this.el.querySelector('canvas');
-    this.tags = this.el.querySelector('.r-tags');
-    this.empty = this.el.querySelector('.r-empty');
-    this.count = this.el.querySelector('.r-count');
+    const lobby = document.querySelector('#lobby');
+    if (!lobby) return;
 
     this.entries = new Map();
+    this.list = [];
     this.mouseX = 0;
     this.time = 0;
-    this.camTarget = { z: 8.5, y: 1.9 };
+    this.camTarget = { z: 7.5, y: 2.0 };
 
+    this.injectStyles();
+    this.buildLayout(lobby);
     this.initScene();
     window.clashRoster = this;
 
@@ -71,6 +225,74 @@ export class Roster {
     requestAnimationFrame(this.loop);
   }
 
+  injectStyles() {
+    const style = document.createElement('style');
+    style.textContent = CSS;
+    document.head.appendChild(style);
+  }
+
+  buildLayout(lobby) {
+    const panel = lobby.querySelector('.lobby-panel');
+    const grab = id => (panel || lobby).querySelector(id);
+
+    // Récupère les éléments existants avant de reconstruire la mise en page.
+    const displayCode  = grab('#display-code');
+    const copyCode     = grab('#copy-code');
+    const leaveLobby   = grab('#leave-lobby');
+    const hostSettings = grab('#host-settings');
+    const startGame    = grab('#start-game');
+    const lobbyStatus  = grab('#lobby-status');
+
+    lobby.innerHTML = '';
+    lobby.classList.add('lobby-fs');
+
+    // 1) Scène 3D plein écran (fond)
+    this.el = document.createElement('div');
+    this.el.id = 'roster';
+    this.el.innerHTML = `
+      <canvas></canvas>
+      <div class="r-tags"></div>
+      <div class="r-empty">EN ATTENTE DES JOUEURS…</div>`;
+    lobby.appendChild(this.el);
+
+    // 2) Rail gauche — infos du salon
+    this.left = document.createElement('aside');
+    this.left.className = 'lobby-rail lobby-left';
+    this.left.innerHTML = `
+      <div class="rail-head"><span>SALON</span><span class="rail-count">0 / 16</span></div>
+      <div class="rail-section">
+        <div class="rail-label">CODE DU SALON</div>
+        <div class="rail-code"></div>
+      </div>
+      <div class="rail-section rail-status"></div>
+      <div class="rail-section rail-footer"></div>`;
+    lobby.appendChild(this.left);
+
+    // 3) Rail droit — configuration (hôte uniquement)
+    this.right = document.createElement('aside');
+    this.right.className = 'lobby-rail lobby-right hidden';
+    this.right.innerHTML = `
+      <div class="rail-head"><span>CONFIGURATION</span></div>
+      <div class="rail-section rail-settings"></div>
+      <div class="rail-section rail-start"></div>`;
+    lobby.appendChild(this.right);
+
+    // Réinstalle les éléments dans leurs nouveaux emplacements.
+    const codeSlot = this.left.querySelector('.rail-code');
+    if (displayCode)  codeSlot.appendChild(displayCode);
+    if (copyCode)     codeSlot.appendChild(copyCode);
+    if (lobbyStatus)  this.left.querySelector('.rail-status').appendChild(lobbyStatus);
+    if (leaveLobby)   this.left.querySelector('.rail-footer').appendChild(leaveLobby);
+    if (hostSettings) this.right.querySelector('.rail-settings').appendChild(hostSettings);
+    if (startGame)    this.right.querySelector('.rail-start').appendChild(startGame);
+
+    this.stage  = this.el;
+    this.canvas = this.el.querySelector('canvas');
+    this.tags   = this.el.querySelector('.r-tags');
+    this.empty  = this.el.querySelector('.r-empty');
+    this.count  = this.left.querySelector('.rail-count');
+  }
+
   initScene() {
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true });
     this.renderer.setClearColor(0x000000, 0);
@@ -81,8 +303,8 @@ export class Roster {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(34, 2.2, 0.1, 80);
-    this.camera.position.set(0, 1.9, 8.5);
+    this.camera = new THREE.PerspectiveCamera(36, 2.2, 0.1, 80);
+    this.camera.position.set(0, 2.0, 7.5);
 
     this.scene.add(new THREE.HemisphereLight(0xdbe8f5, 0x20262b, 1.1));
     const key = new THREE.DirectionalLight(0xffe2bd, 2.4);
@@ -98,14 +320,14 @@ export class Roster {
 
     // Plateau + anneau lumineux
     const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(11, 64),
+      new THREE.CircleGeometry(12, 64),
       new THREE.MeshStandardMaterial({ color: 0x151c22, roughness: 0.85 })
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     this.scene.add(floor);
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(10.6, 10.8, 64),
+      new THREE.RingGeometry(11.6, 11.8, 64),
       new THREE.MeshBasicMaterial({ color: 0xf07845 })
     );
     ring.rotation.x = -Math.PI / 2;
@@ -117,13 +339,22 @@ export class Roster {
     const w = this.stage.clientWidth, h = this.stage.clientHeight;
     if (!w || !h) return;
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
+    const aspect = w / h;
+    this.camera.aspect = aspect;
+    // Sur viewport étroit (portrait), on élargit le champ pour garder tous les joueurs visibles.
+    this.camera.fov = aspect < 1 ? 50 : aspect < 1.4 ? 42 : 36;
     this.camera.updateProjectionMatrix();
   }
 
-  /** players : [{ id, name, host, me }] ou null (salon quitté). */
-  set(players) {
-    this.list = Array.isArray(players) ? players.filter(Boolean).slice(0, 16) : [];
+  /** players : [{ id, name, host, me }] ou null (salon quitté). isHost contrôle le rail droit. */
+  set(players, isHost = false) {
+    if (!Array.isArray(players)) {
+      this.list = [];
+      this.right?.classList.add('hidden');
+    } else {
+      this.list = players.filter(Boolean).slice(0, 16);
+      this.right?.classList.toggle('hidden', !isHost);
+    }
     this.sync();
   }
 
@@ -199,7 +430,7 @@ export class Roster {
       e.tag.appendChild(b);
     };
     if (p.host) badge('HÔTE');
-    if (p.me) badge('TOI', 'you');
+    if (p.me)   badge('TOI', 'you');
     e.ring.visible = !!p.me;
   }
 
@@ -221,7 +452,7 @@ export class Roster {
         if (e.fresh) { e.x = e.tx; e.z = e.tz; e.fresh = false; }
       }
     }
-    this.camTarget = { z: 8.5 + (rows - 1) * 1.7, y: 1.9 + (rows - 1) * 0.7 };
+    this.camTarget = { z: 7.5 + (rows - 1) * 1.6, y: 2.0 + (rows - 1) * 0.6 };
   }
 
   loop(now) {
@@ -231,7 +462,8 @@ export class Roster {
 
     // Ne rien dessiner quand le salon est masqué (menu ou partie en cours).
     if (!this.el.offsetParent) return;
-    if (this.canvas.width === 0 || this.canvas.width !== Math.round(this.stage.clientWidth * this.renderer.getPixelRatio())) this.resize();
+    const wantW = Math.round(this.stage.clientWidth * this.renderer.getPixelRatio());
+    if (this.canvas.width === 0 || this.canvas.width !== wantW) this.resize();
 
     this.time += dt;
     const k = 1 - Math.exp(-dt * 6);
