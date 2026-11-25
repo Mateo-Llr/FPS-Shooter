@@ -81,7 +81,7 @@ export class World {
       barrel: new THREE.MeshStandardMaterial({ color: 0x9b3a2a, metalness: .5, roughness: .45 })
     };
 
-    this.box(0, -0.35, 0, 40, .5, 40, this.materials.ground, false);
+    this.box(0, -0.25, 0, 40, .5, 40, this.materials.ground, false); // dessus du sol = y 0
 
     // Limites de l'arène
     this.box(0, 2, -20, 40, 4, .8, this.materials.dark);
@@ -125,9 +125,11 @@ export class World {
       scene.add(line);
     }
 
-    // Points de réapparition (9 répartis, orientés vers le centre)
-    this.spawns = [[-15, 15], [15, -15], [0, 16], [0, -16], [-16, -5], [16, 5], [-4, 6], [4, -6], [-17, -17], [17, 17]]
-      .map(([x, z]) => ({ x, z, yaw: Math.atan2(x, z) }));
+    // Points de réapparition (18, pour 16 joueurs max, orientés vers le centre)
+    this.spawns = [
+      [-15, 15], [15, -15], [0, 16], [0, -16], [-16, -5], [16, 5], [-4, 6], [4, -6], [-17, -17], [17, 17],
+      [-8, 16], [8, -16], [-17, 8], [17, -8], [-9, 0], [9, 0], [-12, 17], [12, -17]
+    ].map(([x, z]) => ({ x, z, yaw: Math.atan2(x, z) }));
   }
 
   addCollider(x, y, z, w, h, d) {
@@ -202,11 +204,12 @@ export class World {
     return best;
   }
 
-  /** Spawn aléatoire parmi les 3 plus éloignés de l'adversaire (anti spawn-kill). */
+  /** Spawn aléatoire parmi les 3 les plus éloignés de tous les joueurs fournis (anti spawn-kill). */
   pickSpawn(avoid, last) {
+    const pts = (Array.isArray(avoid) ? avoid : [avoid]).filter(Boolean);
     const list = this.spawns
       .filter(s => s !== last)
-      .map(s => ({ s, d: Math.hypot(s.x - avoid.x, s.z - avoid.z) }))
+      .map(s => ({ s, d: pts.length ? Math.min(...pts.map(p => Math.hypot(s.x - p.x, s.z - p.z))) : 0 }))
       .sort((a, b) => b.d - a.d)
       .slice(0, 3);
     return list[Math.floor(Math.random() * list.length)].s;

@@ -96,7 +96,7 @@ export class Lobby {
 
   render() {
     const n = this.players.length;
-    window.clashRoster?.set(this.players.map(p => ({ name: p.name, host: p.id === 0, me: p.id === this.me })));
+    window.clashRoster?.set(this.players.map(p => ({ id: p.id, name: p.name, host: p.id === 0, me: p.id === this.me })));
     const start = $('#start-game');
     start.disabled = n < 2;
     this.status(this.network.isHost

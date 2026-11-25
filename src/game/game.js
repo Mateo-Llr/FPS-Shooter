@@ -3,10 +3,12 @@ import { World } from './world.js';
 import { PlayerController } from './player.js';
 import { WeaponSystem, WEAPONS } from './weapons.js';
 import { HUD } from './hud.js';
-import { MSG } from '../network/protocol.js';
+import { createCharacter, disposeCharacter, showGun, gunModel, box, SHIRT_COLORS } from './character.js';
+import { MSG, MAX_PLAYERS } from '../network/protocol.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const lerp = (a, b, t) => a + (b - a) * t;
+const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
 const ease = t => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
 const lerpAngle = (a, b, t) => {
   const d = (((b - a + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
@@ -14,9 +16,10 @@ const lerpAngle = (a, b, t) => {
 };
 const rnd = () => Math.random() * 2 - 1;
 
-const NET_DT = 1 / 30;
+const NET_DT = 1 / 20;
 const RESPAWN_TIME = 3;
 const SPAWN_PROTECTION = 1500;
+const WEAPON_IDS = ['shotgun', 'rifle', 'sniper'];
 
 const G_SPH = new THREE.SphereGeometry(1, 6, 6);
 const G_CYL = new THREE.CylinderGeometry(1, 1, 1, 5);
@@ -26,12 +29,18 @@ const M_BLOOD = new THREE.MeshBasicMaterial({ color: 0xb01818 });
 const M_DUST = new THREE.MeshBasicMaterial({ color: 0xc4c0b2 });
 const M_HOLE = new THREE.MeshBasicMaterial({ color: 0x0d0d0d });
 
-const box = (parent, [w, h, d], mat, x, y, z) => {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-  m.position.set(x, y, z);
-  parent.add(m);
-  return m;
-};
+// --- Encodage compact des positions pour le réseau : [x, y, z, yaw, pitch, accroupi, arme] ---
+const r2 = v => Math.round(v * 100) / 100;
+const encode = s => [r2(s.x), r2(s.y || 0), r2(s.z), r2(s.yaw || 0), r2(s.pitch || 0), s.crouch ? 1 : 0, Math.max(0, WEAPON_IDS.indexOf(s.w))];
+const decode = a => ({
+  x: clampN(a[0], -25, 25), y: clampN(a[1], -1, 8), z: clampN(a[2], -25, 25),
+  yaw: a[3], pitch: a[4], crouch: !!a[5], w: WEAPON_IDS[a[6]] || 'rifle'
+});
+const validPos = a => Array.isArray(a) && a.length >= 7 && a.every(Number.isFinite);
+const validShot = s => !!s && !!WEAPONS[s.weapon] &&
+  Array.isArray(s.o) && s.o.length === 3 && s.o.every(Number.isFinite) &&
+  Array.isArray(s.d) && s.d.length >= 1 && s.d.length <= 10 &&
+  s.d.every(a => Array.isArray(a) && a.length === 3 && a.every(Number.isFinite));
 
 const UI_CSS = `
 #kill-feed{position:fixed;top:92px;right:22px;z-index:60;display:grid;gap:6px;justify-items:end;pointer-events:none}
@@ -71,7 +80,12 @@ radial-gradient(circle at center,transparent 0,transparent 31vmin,#000 31.3vmin)
 .sb-panel tr.top td:nth-child(3){color:#7fe08a}
 .sb-panel em{font:800 10px Inter,Arial,sans-serif;letter-spacing:.14em;background:#f07845;color:#10151a;padding:2px 6px;margin-left:8px;font-style:normal}
 .sb-hint{margin-top:16px;font:600 11px Inter,Arial,sans-serif;letter-spacing:.16em;color:#7d8b92}
-#sb-menu{margin-top:24px;width:100%}`;
+#sb-menu{margin-top:24px;width:100%}
+.sb-scroll{max-height:56vh;overflow-y:auto}
+.sb-panel.compact td{padding:5px 10px;font-size:16px}
+.sb-panel.compact .sb-title{font-size:44px}
+.sb-panel tr.gone td{opacity:.4}
+.sb-panel em.gone{background:#46545b;color:#cfd8dc}`;
 
 export class Game {
   constructor(canvas, network) {
@@ -101,21 +115,19 @@ export class Game {
     this.active = false;
     this.host = false;
     this.me = 0;
-    this.hp = [100, 100];
-    this.dead = [false, false];
-    this.invuln = [0, 0];
-    this.pending = [null, null];
-    this.lastSpawn = [null, null];
-    this.score = [0, 0];
+    this.names = [];          // names[id] = pseudo ou null
+    this.ids = [];            // ids des joueurs encore présents
+    this.roster = [];         // ids de tous les joueurs du début de partie (scoreboard)
+    this.gone = new Set();    // ids des joueurs partis
+    this.remotes = new Map(); // id -> { id, ch, r (affiché), n (réseau), ... }
+
+    this.resetArrays();
     this.elapsed = 0;
     this.clockValue = 0;
     this.config = null;
-
-    this.remote = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, crouch: false };
-    this.remoteNet = { ...this.remote };
-    this.remoteMoving = false;
-    this.remoteWalkTime = 0;
-    this.enemyDead = null;
+    this.over = false;
+    this.forfeit = false;
+    this.endAt = 0;
 
     this.fx = [];
     this.death = null;
@@ -128,14 +140,12 @@ export class Game {
     this.bobT = 0;
     this.reloadK = 0;
     this.ads = 0;
-    this.stats = [{ d: 0, h: 0 }, { d: 0, h: 0 }];
     this.finalShown = false;
     this.sbHeld = false;
     this.weaponRecoil = 0;
     this.hitmarkerUntil = 0;
     this.netAcc = 0;
 
-    this.buildRemote();
     this.buildWeaponView();
     this.buildCrosshair();
     this.buildUI();
@@ -150,98 +160,43 @@ export class Game {
     this.animate();
   }
 
-  // ============ CONSTRUCTION DE LA SCÈNE ============
-
-  buildRemote() {
-    const M = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
-    const skin = M(0xe0ae88), shirt = M(0xc94f36), pants = M(0x26374e),
-      shoes = M(0x171b22), dark = M(0x252b32), gun = M(0x151a20);
-    const g = new THREE.Group();
-    g.rotation.order = 'YXZ';
-
-    box(g, [0.62, 0.72, 0.34], shirt, 0, 1.12, 0);
-    box(g, [0.43, 0.43, 0.43], skin, 0, 1.72, 0);
-    box(g, [0.46, 0.12, 0.46], dark, 0, 1.95, 0);
-    [-1, 1].forEach(s => box(g, [0.055, 0.055, 0.025], dark, s * 0.105, 1.77, -0.22));
-
-    this.remoteArms = [];
-    this.remoteLegs = [];
-    [-1, 1].forEach(s => {
-      const a = new THREE.Group();
-      a.position.set(s * 0.39, 1.38, 0);
-      g.add(a);
-      box(a, [0.23, 0.66, 0.25], shirt, 0, -0.32, 0);
-      box(a, [0.2, 0.18, 0.22], skin, 0, -0.68, 0);
-      this.remoteArms.push(a);
-
-      const l = new THREE.Group();
-      l.position.set(s * 0.16, 0.76, 0);
-      g.add(l);
-      box(l, [0.25, 0.68, 0.29], pants, 0, -0.34, 0);
-      box(l, [0.27, 0.16, 0.39], shoes, 0, -0.7, -0.035);
-      this.remoteLegs.push(l);
-    });
-    this.enemyGuns = {};
-    for (const t of ['shotgun', 'rifle', 'sniper']) {
-      const m = this.gunModel(t);
-      m.scale.setScalar(0.7);
-      m.position.set(0.2, 1.28, -0.3);
-      g.add(m);
-      this.enemyGuns[t] = m;
-    }
-
-    g.traverse(o => { o.castShadow = true; });
-    this.enemyMesh = g;
-    this.scene.add(g);
+  resetArrays() {
+    const arr = f => Array.from({ length: MAX_PLAYERS }, f);
+    this.hp = arr(() => 100);
+    this.dead = arr(() => false);
+    this.invuln = arr(() => 0);
+    this.pending = arr(() => null);
+    this.lastSpawn = arr(() => null);
+    this.score = arr(() => 0);
+    this.stats = arr(() => ({ d: 0, h: 0 }));
   }
 
-  gunModel(t) {
-    const mat = (c, m, r) => new THREE.MeshStandardMaterial({ color: c, metalness: m, roughness: r });
-    const metal = mat(0x202832, 0.75, 0.3), black = mat(0x10151c, 0.4, 0.55), accent = mat(0xd85b32, 0.25, 0.45),
-      wood = mat(0x6b4425, 0.1, 0.7), green = mat(0x2d3a2e, 0.3, 0.6);
-    const G = new THREE.Group();
-    const cyl = (r, len, m, y, z) => {
-      const c = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), m);
-      c.rotation.x = Math.PI / 2;
-      c.position.set(0, y, z);
-      G.add(c);
-    };
-    if (t === 'shotgun') {
-      box(G, [0.22, 0.18, 0.5], metal, 0, 0, 0);
-      cyl(0.06, 0.85, black, 0.04, -0.62);
-      cyl(0.045, 0.7, metal, -0.06, -0.55);
-      box(G, [0.15, 0.13, 0.3], wood, 0, -0.06, -0.45);
-      box(G, [0.18, 0.2, 0.42], wood, 0, -0.02, 0.45);
-      box(G, [0.12, 0.25, 0.15], wood, 0, -0.18, 0.14);
-      G.userData.muzzle = -1.05;
-    } else if (t === 'sniper') {
-      box(G, [0.18, 0.17, 0.8], metal, 0, 0, 0);
-      cyl(0.032, 1.1, black, 0.03, -0.85);
-      cyl(0.065, 0.42, black, 0.17, -0.1);
-      cyl(0.078, 0.06, accent, 0.17, -0.33);
-      box(G, [0.17, 0.22, 0.5], green, 0, -0.02, 0.6);
-      box(G, [0.12, 0.25, 0.15], black, 0, -0.18, 0.2);
-      box(G, [0.1, 0.2, 0.12], black, 0, -0.17, -0.1);
-      G.userData.muzzle = -1.4;
-    } else {
-      box(G, [0.24, 0.2, 0.62], metal, 0, 0, 0);
-      cyl(0.05, 0.7, black, 0.045, -0.56);
-      box(G, [0.19, 0.16, 0.34], black, 0, -0.015, 0.43);
-      box(G, [0.12, 0.27, 0.16], black, 0, -0.19, 0.13).rotation.x = -0.18;
-      box(G, [0.12, 0.08, 0.18], accent, 0, 0.14, -0.13);
-      box(G, [0.055, 0.12, 0.06], black, 0, 0.23, -0.13);
-      box(G, [0.12, 0.19, 0.13], black, 0, -0.14, -0.35);
-      box(G, [0.1, 0.3, 0.12], accent, 0, -0.22, -0.02);
-      G.userData.muzzle = -0.93;
-    }
-    return G;
+  nameOf(id) { return this.names[id] || 'Joueur'; }
+
+  // ============ CONSTRUCTION DE LA SCÈNE ============
+
+  /** Crée le modèle 3D d'un adversaire (un par joueur distant). */
+  addRemote(id, spawn) {
+    const ch = createCharacter({ shirt: SHIRT_COLORS[id % SHIRT_COLORS.length], label: this.nameOf(id) });
+    this.scene.add(ch.group);
+    ch.group.position.set(spawn.x, 0, spawn.z);
+    ch.group.rotation.y = spawn.yaw;
+    const r = { x: spawn.x, y: 0, z: spawn.z, yaw: spawn.yaw, pitch: 0, crouch: false, w: 'rifle' };
+    this.remotes.set(id, { id, ch, r, n: { ...r }, moving: false, walkT: 0, deadT: null });
+  }
+
+  removeRemote(id) {
+    const rem = this.remotes.get(id);
+    if (!rem) return;
+    disposeCharacter(rem.ch);
+    this.remotes.delete(id);
   }
 
   buildWeaponView() {
     const W = new THREE.Group();
     this.guns = {};
-    for (const t of ['shotgun', 'rifle', 'sniper']) {
-      this.guns[t] = this.gunModel(t);
+    for (const t of WEAPON_IDS) {
+      this.guns[t] = gunModel(t);
       W.add(this.guns[t]);
     }
     const skin = new THREE.MeshStandardMaterial({ color: 0xc28e70, roughness: 0.85 });
@@ -333,43 +288,58 @@ export class Game {
   }
 
   // ============ RÉSEAU ============
+  // Topologie en étoile : l'hôte (id 0) est autoritaire. Les invités lui envoient leur position
+  // (INPUT) et leurs tirs (EVENT shot) ; l'hôte diffuse l'état de TOUS les joueurs (STATE) et relaie
+  // les tirs aux autres invités.
 
   bindNetwork() {
-    this.network.on(MSG.INPUT, data => { if (this.host) this.receiveInput(data); });
-    this.network.on(MSG.STATE, data => { if (!this.host) this.applyState(data); });
-    this.network.on(MSG.EVENT, data => this.handleEvent(data));
-    this.network.on(MSG.GAMEOVER, data => {
-      if (data.score) this.score = data.score;
-      this.finish(data.reason || 'Fin de partie');
+    const n = this.network;
+    n.on(MSG.INPUT, d => { if (this.host) this.receiveInput(d); });
+    n.on(MSG.STATE, d => { if (!this.host) this.applyState(d); });
+    n.on(MSG.EVENT, d => {
+      if (!this.active || !d) return;
+      if (this.host) { if (d.kind === 'shot') this.hostReceiveShot(d.from, d.shot); }
+      else this.handleEvent(d);
     });
-    this.network.on(MSG.DISCONNECTED, () => this.remoteDisconnected());
+    n.on(MSG.GAMEOVER, d => {
+      if (this.host || !this.active) return;
+      if (Array.isArray(d.score)) this.score = d.score;
+      if (Array.isArray(d.stats)) this.stats = d.stats;
+      this.finish(d.reason || 'Fin de partie', '', d.winner ?? -1);
+    });
+    n.on('peer-left', d => this.playerLeft(d.id));
+    n.on('disconnected', () => {
+      if (this.active && !this.host) this.finish('Connexion perdue avec l’hôte', 'CONNEXION PERDUE', -2);
+    });
   }
 
   snap() {
     return { ...this.controller.snapshot(), crouch: this.controller.crouched, w: this.weapon.current };
   }
 
-  /** Hôte : reçoit la position de l'invité. */
-  receiveInput(data) {
-    if (!data.input) return;
-    Object.assign(this.remoteNet, data.input);
-    if (this.disconnectDeadline) {
-      this.disconnectDeadline = null;
-      this.controller.enabled = !this.death;
-      this.hud.clearMessage();
-    }
+  /** Hôte : reçoit la position d'un invité. */
+  receiveInput(d) {
+    const rem = this.remotes.get(d.from);
+    if (!rem || !validPos(d.input)) return;
+    Object.assign(rem.n, decode(d.input));
   }
 
-  /** Invité : reçoit l'état autoritaire de l'hôte. */
+  /** Invité : reçoit l'état autoritaire (vie, scores, positions de tous les joueurs). */
   applyState({ state: s }) {
-    if (!s) return;
+    if (!s || !this.active) return;
     this.hp = s.hp;
     this.score = s.score;
     this.dead = s.dead;
     this.clockValue = s.time;
-    Object.assign(this.remoteNet, s.hostPos);
+    for (const [id, a] of Object.entries(s.pos || {})) {
+      const i = +id;
+      if (i === this.me || !validPos(a)) continue;
+      const rem = this.remotes.get(i);
+      if (rem) Object.assign(rem.n, decode(a));
+    }
   }
 
+  /** Hôte : applique localement ET diffuse un événement. */
   emit(ev) {
     this.network.send(MSG.EVENT, ev);
     this.handleEvent(ev);
@@ -379,41 +349,60 @@ export class Game {
     if (!this.active || !ev) return;
     switch (ev.kind) {
       case 'shot':
-        this.renderShot(ev.shot, false);
-        if (this.host) this.resolveShot(1, ev.shot);
+        if (ev.shooter !== this.me && validShot(ev.shot)) this.renderShot(ev.shot, false);
         break;
       case 'hit': this.onHit(ev); break;
       case 'kill': this.onKill(ev); break;
       case 'respawn': this.onRespawn(ev); break;
+      case 'left': this.onLeft(ev); break;
     }
+  }
+
+  /** Hôte : un invité s'est déconnecté pendant la partie. */
+  playerLeft(id) {
+    if (!this.active || !this.host || !this.ids.includes(id)) return;
+    this.dead[id] = true;
+    this.pending[id] = null;
+    this.emit({ kind: 'left', who: id });
+    if (this.ids.length < 2 && !this.over) {
+      this.over = true;
+      this.forfeit = true;
+      this.endAt = performance.now() + 500;
+    }
+  }
+
+  onLeft(ev) {
+    const name = this.nameOf(ev.who);
+    this.removeRemote(ev.who);
+    this.ids = this.ids.filter(i => i !== ev.who);
+    this.gone.add(ev.who);
+    this.dead[ev.who] = true;
+    this.addFeed(`${name} a quitté la partie`, '');
   }
 
   // ============ DÉMARRAGE ============
 
-  start(config, host, youName, enemyName) {
+  /** names[id] = pseudo (null si absent). `me` = mon id réseau (0 = hôte). */
+  start(config, me, names) {
     this.config = config;
-    this.host = host;
-    this.me = host ? 0 : 1;
-    this.youName = youName;
-    this.enemyName = enemyName;
+    this.host = this.network.isHost;
+    this.me = me;
+    this.names = (names || []).map(n => n ?? null);
+    this.ids = this.names.map((n, i) => (n != null ? i : -1)).filter(i => i >= 0);
+    this.roster = this.ids.slice();
+    this.gone = new Set();
 
-    this.hp = [100, 100];
-    this.dead = [false, false];
-    this.invuln = [0, 0];
-    this.pending = [null, null];
-    this.lastSpawn = [null, null];
-    this.score = [0, 0];
+    this.resetArrays();
     this.elapsed = 0;
     this.clockValue = config.mode === 'time' ? config.duration : 0;
     this.over = false;
+    this.forfeit = false;
     this.endAt = 0;
-    this.stats = [{ d: 0, h: 0 }, { d: 0, h: 0 }];
     this.finalShown = false;
     this.hideScoreboard();
     this.death = null;
-    this.enemyDead = null;
-    this.disconnectDeadline = null;
     this.timeScale = 1;
+    this.netAcc = 0;
 
     this.fx.forEach(f => this.disposeFx(f));
     this.fx = [];
@@ -421,7 +410,13 @@ export class Game {
     this.deathEl.classList.remove('show');
     this.deathEl.style.display = 'none';
 
-    const mine = this.world.spawns[this.me], theirs = this.world.spawns[1 - this.me];
+    // Spawns initiaux déterministes : tous les clients calculent la même chose.
+    const spawnOf = id => this.world.spawns[this.ids.indexOf(id) % this.world.spawns.length];
+
+    for (const id of [...this.remotes.keys()]) this.removeRemote(id);
+    for (const id of this.ids) if (id !== this.me) this.addRemote(id, spawnOf(id));
+
+    const mine = spawnOf(this.me);
     this.controller.position = { x: mine.x, y: 0, z: mine.z };
     this.controller.yaw = mine.yaw;
     this.controller.pitch = 0;
@@ -431,11 +426,6 @@ export class Game {
     this.ads = 0;
     this.controller.enabled = true;
     this.lastPos = { x: mine.x, z: mine.z };
-
-    this.remote = { x: theirs.x, y: 0, z: theirs.z, yaw: theirs.yaw, pitch: 0, crouch: false };
-    this.remoteNet = { ...this.remote };
-    this.enemyMesh.rotation.set(0, theirs.yaw, 0);
-    this.enemyMesh.position.set(theirs.x, 0, theirs.z);
     this.weaponModel.visible = true;
 
     this.weapon.reset();
@@ -522,14 +512,30 @@ export class Game {
     this.bang(w, 0.35);
 
     if (this.host) {
-      this.network.send(MSG.EVENT, { kind: 'shot', shot });
-      this.resolveShot(0, shot);
+      this.relayShot(this.me, shot);
+      this.resolveShot(this.me, shot);
     } else {
       this.network.send(MSG.EVENT, { kind: 'shot', shot });
     }
   }
 
-  /** Effets visuels/sonores d'un tir (le mien ou celui de l'adversaire). */
+  /** Hôte : reçoit le tir d'un invité, l'affiche, le résout, le relaie aux autres. */
+  hostReceiveShot(from, shot) {
+    if (!this.remotes.has(from) || !validShot(shot)) return;
+    this.renderShot(shot, false);
+    this.relayShot(from, shot);
+    this.resolveShot(from, shot);
+  }
+
+  /** Hôte : envoie le tir de `shooter` à tous les invités sauf lui-même. */
+  relayShot(shooter, shot) {
+    for (const id of this.ids) {
+      if (id === 0 || id === shooter) continue;
+      this.network.sendTo(id, MSG.EVENT, { kind: 'shot', shot, shooter });
+    }
+  }
+
+  /** Effets visuels/sonores d'un tir (le mien ou celui d'un adversaire). */
   renderShot(shot, mine) {
     const o = V(...shot.o), range = WEAPONS[shot.weapon]?.range ?? 30;
     const first = V(...shot.d[0]);
@@ -624,41 +630,58 @@ export class Game {
       const p = this.controller.position;
       return { x: p.x, y: p.y, z: p.z, crouch: this.controller.crouched };
     }
-    return this.remoteNet;
+    return this.remotes.get(i)?.n ?? { x: 999, y: 0, z: 999, crouch: false };
   }
 
   resolveShot(shooter, shot) {
-    const v = 1 - shooter, now = performance.now();
-    if (this.over || this.dead[shooter] || this.dead[v] || this.invuln[v] > now) return;
+    const now = performance.now();
+    if (this.over || this.dead[shooter]) return;
     const st = WEAPONS[shot.weapon];
     if (!st || !shot.d?.length) return;
 
-    const o = V(...shot.o), p = this.posOf(v), s = p.crouch ? 0.78 : 1;
-    const body = new THREE.Box3(V(p.x - 0.34, p.y, p.z - 0.34), V(p.x + 0.34, p.y + 1.5 * s, p.z + 0.34));
-    const head = new THREE.Sphere(V(p.x, p.y + 1.74 * s, p.z), 0.27);
-    const per = st.damage / shot.d.length, tmp = V(0, 0, 0);
-    let dmg = 0, headHit = false, hitPoint = null;
+    const o = V(...shot.o), per = st.damage / shot.d.length, tmp = V(0, 0, 0);
 
+    // Cibles potentielles : tous les autres joueurs vivants et non protégés.
+    const targets = [];
+    for (const v of this.ids) {
+      if (v === shooter || this.dead[v] || this.invuln[v] > now) continue;
+      const p = this.posOf(v), y = p.y || 0, s = p.crouch ? 0.78 : 1;
+      targets.push({
+        v,
+        body: new THREE.Box3(V(p.x - 0.34, y, p.z - 0.34), V(p.x + 0.34, y + 1.5 * s, p.z + 0.34)),
+        head: new THREE.Sphere(V(p.x, y + 1.74 * s, p.z), 0.27)
+      });
+    }
+    if (!targets.length) return;
+
+    const acc = new Map(); // victime -> { dmg, head, p }
     for (const a of shot.d.slice(0, 10)) {
       const dir = V(...a).normalize(), ray = new THREE.Ray(o, dir);
       const wall = this.world.rayDistance(o, dir, st.range);
-      let t = Infinity, isHead = false, hp = null;
-      if (ray.intersectSphere(head, tmp)) { t = o.distanceTo(tmp); isHead = true; hp = tmp.clone(); }
-      if (ray.intersectBox(body, tmp)) {
-        const tb = o.distanceTo(tmp);
-        if (tb < t) { t = tb; isHead = false; hp = tmp.clone(); }
+      let best = null;
+      for (const tg of targets) {
+        let t = Infinity, isHead = false, hp = null;
+        if (ray.intersectSphere(tg.head, tmp)) { t = o.distanceTo(tmp); isHead = true; hp = tmp.clone(); }
+        if (ray.intersectBox(tg.body, tmp)) {
+          const tb = o.distanceTo(tmp);
+          if (tb < t) { t = tb; isHead = false; hp = tmp.clone(); }
+        }
+        if (t < wall && t <= st.range && (!best || t < best.t)) best = { v: tg.v, t, isHead, hp };
       }
-      if (t < wall && t <= st.range) {
-        let k = isHead ? 2 : 1;
-        if (shot.weapon === 'shotgun') k *= 1 - 0.6 * (t / st.range);
-        dmg += per * k;
-        headHit ||= isHead;
-        hitPoint = hp;
-      }
+      if (!best) continue;
+      let k = best.isHead ? 2 : 1;
+      if (shot.weapon === 'shotgun') k *= 1 - 0.6 * (best.t / st.range);
+      const e = acc.get(best.v) ?? { dmg: 0, head: false, p: null };
+      e.dmg += per * k;
+      e.head ||= best.isHead;
+      e.p = best.hp;
+      acc.set(best.v, e);
     }
 
-    dmg = Math.round(dmg);
-    if (dmg > 0) this.applyDamage(shooter, v, dmg, headHit, shot.weapon, hitPoint);
+    for (const [v, e] of acc) {
+      const dmg = Math.round(e.dmg);
+      if (dmg > 0 && !this.dead[v]) this.applyDamage(shooter, v, dmg, e.head, shot.weapon, e.p);
+    }
   }
 
   applyDamage(shooter, victim, dmg, head, weapon, p) {
@@ -671,15 +694,16 @@ export class Game {
     this.score[killer]++;
     this.dead[victim] = true;
 
-    // Respawn aléatoire, loin de l'adversaire (anti spawn-kill)
-    const spawn = this.world.pickSpawn(this.posOf(killer), this.lastSpawn[victim]);
+    // Respawn aléatoire, loin de TOUS les autres joueurs vivants (anti spawn-kill)
+    const others = this.ids.filter(i => i !== victim && !this.dead[i]).map(i => this.posOf(i));
+    const spawn = this.world.pickSpawn(others, this.lastSpawn[victim]);
     this.lastSpawn[victim] = spawn;
     this.pending[victim] = { spawn, at: performance.now() + RESPAWN_TIME * 1000 };
 
     const kp = this.posOf(killer);
     this.emit({ kind: 'kill', killer, victim, weapon, head, score: this.score.slice(), kx: kp.x, kz: kp.z });
 
-    if (this.config.mode === 'kills' && this.score[killer] >= this.config.target) {
+    if (this.config.mode === 'kills' && this.score[killer] >= this.config.target && !this.over) {
       this.over = true;
       this.endAt = performance.now() + 2800;
     }
@@ -698,14 +722,9 @@ export class Game {
       this.end(this.verdict());
       return;
     }
-    if (this.disconnectDeadline && now > this.disconnectDeadline) {
-      this.disconnectDeadline = null;
-      this.end('Victoire par forfait');
-      return;
-    }
 
     if (!this.over) {
-      for (const i of [0, 1]) {
+      for (const i of this.ids) {
         const pend = this.pending[i];
         if (this.dead[i] && pend && now >= pend.at) {
           this.pending[i] = null;
@@ -719,13 +738,16 @@ export class Game {
   }
 
   verdict() {
-    const [a, b] = this.score;
-    if (a === b) return 'Égalité';
-    const w = a > b ? 0 : 1;
-    return `Victoire de ${w === this.me ? this.youName : this.enemyName}`;
+    if (this.forfeit) {
+      return { reason: 'Victoire par forfait', winner: this.ids[0] ?? this.me };
+    }
+    const top = Math.max(...this.ids.map(i => this.score[i]));
+    const leaders = this.ids.filter(i => this.score[i] === top);
+    if (leaders.length > 1) return { reason: 'Égalité', winner: -1 };
+    return { reason: `Victoire de ${this.nameOf(leaders[0])}`, winner: leaders[0] };
   }
 
-  // ============ ÉVÉNEMENTS (HÔTE + INVITÉ) ============
+  // ============ ÉVÉNEMENTS (HÔTE + INVITÉS) ============
 
   onHit(ev) {
     this.hp[ev.victim] = ev.hp;
@@ -736,11 +758,20 @@ export class Game {
       this.flashVignette();
       this.shake = 0.03;
       this.beep(110, 0.18, 'sawtooth', 0.15);
-    } else {
+    } else if (ev.shooter === this.me) {
       this.showHitmarker(ev.head);
       this.damageSprite(ev.damage, ev.head, p);
       this.beep(ev.head ? 1500 : 950, 0.06, 'square', 0.07);
     }
+  }
+
+  addFeed(text, cls) {
+    const item = document.createElement('div');
+    item.className = 'feed-item' + (cls ? ' ' + cls : '');
+    item.textContent = text;
+    this.feedEl.appendChild(item);
+    setTimeout(() => item.remove(), 5000);
+    while (this.feedEl.children.length > 5) this.feedEl.firstChild.remove();
   }
 
   onKill(ev) {
@@ -748,22 +779,26 @@ export class Game {
     this.dead[ev.victim] = true;
     this.stats[ev.victim].d++;
     if (ev.head) this.stats[ev.killer].h++;
-    const nm = i => (i === this.me ? this.youName : this.enemyName);
+    const nm = i => this.nameOf(i);
 
-    const item = document.createElement('div');
-    item.className = 'feed-item' + (ev.killer === this.me ? ' mine' : ev.victim === this.me ? ' victim' : '');
-    item.textContent = `${nm(ev.killer)}  ▸  ${WEAPONS[ev.weapon]?.label ?? ''}${ev.head ? '  ⌖' : ''}  ▸  ${nm(ev.victim)}`;
-    this.feedEl.appendChild(item);
-    setTimeout(() => item.remove(), 5000);
-    while (this.feedEl.children.length > 4) this.feedEl.firstChild.remove();
+    this.addFeed(
+      `${nm(ev.killer)}  ▸  ${WEAPONS[ev.weapon]?.label ?? ''}${ev.head ? '  ⌖' : ''}  ▸  ${nm(ev.victim)}`,
+      ev.killer === this.me ? 'mine' : ev.victim === this.me ? 'victim' : ''
+    );
 
     if (ev.victim === this.me) {
       this.startDeath(ev, nm(ev.killer));
-    } else {
-      // Scène d'élimination : l'adversaire s'effondre, ralenti + zoom
-      this.enemyDead = 0;
-      const c = V(this.remote.x, 1.2, this.remote.z);
-      this.burst(c, M_BLOOD, 26, 4, 0.8, 0.05);
+      return;
+    }
+
+    // L'adversaire s'effondre
+    const rem = this.remotes.get(ev.victim);
+    if (rem) {
+      rem.deadT = 0;
+      this.burst(V(rem.r.x, 1.2, rem.r.z), M_BLOOD, 26, 4, 0.8, 0.05);
+    }
+    // Scène d'élimination (ralenti + zoom) seulement pour mon propre kill
+    if (ev.killer === this.me) {
       this.banner(ev.head ? 'TIR À LA TÊTE' : 'ÉLIMINATION', `${nm(ev.victim)} · ${WEAPONS[ev.weapon]?.label ?? ''}`);
       this.timeScale = 0.3;
       this.slowUntil = performance.now() + 450;
@@ -791,11 +826,13 @@ export class Game {
       this.lastPos = { x: ev.x, z: ev.z };
       this.crosshair.style.display = 'block';
     } else {
-      this.enemyDead = null;
-      this.enemyMesh.rotation.x = 0;
-      this.enemyMesh.position.y = 0;
-      Object.assign(this.remote, { x: ev.x, z: ev.z, yaw: ev.yaw });
-      Object.assign(this.remoteNet, { x: ev.x, z: ev.z, yaw: ev.yaw });
+      const rem = this.remotes.get(ev.who);
+      if (!rem) return;
+      rem.deadT = null;
+      rem.ch.group.rotation.x = 0;
+      rem.ch.group.position.y = 0;
+      Object.assign(rem.r, { x: ev.x, y: 0, z: ev.z, yaw: ev.yaw });
+      Object.assign(rem.n, { x: ev.x, y: 0, z: ev.z, yaw: ev.yaw });
     }
   }
 
@@ -878,35 +915,43 @@ export class Game {
 
   // ============ ANIMATIONS ============
 
-  updateRemote(dt) {
-    const r = this.remote, n = this.remoteNet, k = 1 - Math.exp(-dt * 18);
-    const px = r.x, pz = r.z;
-    r.x = lerp(r.x, n.x, k); r.y = lerp(r.y, n.y || 0, k); r.z = lerp(r.z, n.z, k);
-    r.yaw = lerpAngle(r.yaw, n.yaw || 0, k);
-    r.crouch = !!n.crouch;
-    this.remoteMoving = dt > 0 && Math.hypot(r.x - px, r.z - pz) / dt > 0.6;
+  updateRemotes(dt) {
+    const k = 1 - Math.exp(-dt * 18);
+    for (const rem of this.remotes.values()) {
+      const { r, n, ch } = rem, m = ch.group;
+      const px = r.x, pz = r.z;
+      r.x = lerp(r.x, n.x, k);
+      r.y = lerp(r.y, n.y || 0, k);
+      r.z = lerp(r.z, n.z, k);
+      r.yaw = lerpAngle(r.yaw, n.yaw || 0, k);
+      r.crouch = !!n.crouch;
+      rem.moving = dt > 0 && Math.hypot(r.x - px, r.z - pz) / dt > 0.6;
 
-    const m = this.enemyMesh;
-    m.position.x = r.x; m.position.z = r.z;
-    m.rotation.y = r.yaw;
-    if (this.enemyDead !== null) {
-      this.enemyDead += dt;
-      const f = ease(this.enemyDead / 0.5);
-      m.rotation.x = f * (Math.PI / 2);
-      m.position.y = 0.12 * f;
-      return;
+      m.position.x = r.x; m.position.z = r.z;
+      m.rotation.y = r.yaw;
+
+      if (rem.deadT !== null) {
+        // Allongé sur le dos : le corps repose sur le sol (pas dedans).
+        rem.deadT += dt;
+        const f = ease(rem.deadT / 0.5);
+        m.rotation.x = f * (Math.PI / 2);
+        m.position.y = 0.3 * f;
+        if (ch.label) ch.label.visible = false;
+        continue;
+      }
+      if (ch.label) ch.label.visible = !this.dead[rem.id];
+      m.rotation.x = 0;
+      m.position.y = Math.max(0, r.y); // les pieds ne passent jamais sous le sol
+      m.scale.y = lerp(m.scale.y, r.crouch ? 0.78 : 1, k);
+      showGun(ch, n.w || 'rifle');
+
+      if (rem.moving) rem.walkT += dt * 10;
+      const swing = rem.moving ? Math.sin(rem.walkT) * 0.55 : 0;
+      ch.arms[0].rotation.x = swing;
+      ch.arms[1].rotation.x = 1.35 + swing * 0.08; // bras armé pointé vers l'avant
+      ch.legs[0].rotation.x = -swing;
+      ch.legs[1].rotation.x = swing;
     }
-    m.position.y = r.y;
-    m.scale.y = lerp(m.scale.y, r.crouch ? 0.78 : 1, k);
-    const ew = n.w || 'rifle';
-    for (const t in this.enemyGuns) this.enemyGuns[t].visible = t === ew;
-
-    if (this.remoteMoving) this.remoteWalkTime += dt * 10;
-    const swing = this.remoteMoving ? Math.sin(this.remoteWalkTime) * 0.55 : 0;
-    this.remoteArms[0].rotation.x = swing;
-    this.remoteArms[1].rotation.x = 1.35 + swing * 0.08; // bras armé pointé vers l'avant
-    this.remoteLegs[0].rotation.x = -swing;
-    this.remoteLegs[1].rotation.x = swing;
   }
 
   updateWeaponAnimation(dt) {
@@ -941,26 +986,32 @@ export class Game {
 
   updateHUD() {
     const w = this.weapon.stats();
+    // À droite du HUD : le meilleur adversaire du moment.
+    let best = null;
+    for (const i of this.ids) {
+      if (i === this.me) continue;
+      if (best === null || this.score[i] > this.score[best]) best = i;
+    }
     this.hud.update({
       health: this.hp[this.me],
       youScore: this.score[this.me],
-      enemyScore: this.score[1 - this.me],
+      enemyScore: best === null ? 0 : this.score[best],
       time: this.clockValue,
       weapon: { label: w.label + (this.weapon.isReloading() ? ' · RECHARGE…' : '') },
       ammo: this.weapon.getAmmo(),
-      youName: this.youName,
-      enemyName: this.enemyName
+      youName: this.nameOf(this.me),
+      enemyName: best === null ? '—' : this.nameOf(best)
     });
   }
 
-  end(reason) {
+  end(v) {
     this.active = false;
     this.controller.enabled = false;
-    this.network.send(MSG.GAMEOVER, { reason, score: this.score });
-    this.finish(reason);
+    this.network.send(MSG.GAMEOVER, { reason: v.reason, winner: v.winner, score: this.score, stats: this.stats });
+    this.finish(v.reason, '', v.winner);
   }
 
-  finish(reason, title = '') {
+  finish(reason, title = '', winner = -1) {
     if (this.finalShown) return;
     this.active = false;
     this.controller.enabled = false;
@@ -974,37 +1025,39 @@ export class Game {
     this.crosshair.style.display = 'none';
     this.hud.clearMessage();
     this.finalShown = true;
-    this.showScoreboard(true, reason, title);
+    this.showScoreboard(true, reason, title, winner);
   }
 
   // ============ SCOREBOARD ============
 
-  showScoreboard(final = false, reason = '', title = '') {
-    const me = this.me, foe = 1 - me;
+  showScoreboard(final = false, reason = '', title = '', winner = -1) {
+    const me = this.me;
     const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    const name = i => (i === me ? this.youName : this.enemyName) || 'Joueur';
-    const order = [0, 1].sort((a, b) => this.score[b] - this.score[a] || this.stats[a].d - this.stats[b].d);
-    const diff = this.score[me] - this.score[foe];
+    const order = this.roster.slice().sort((a, b) => this.score[b] - this.score[a] || this.stats[a].d - this.stats[b].d);
+    const top = order.length ? this.score[order[0]] : 0;
+    const uniqueTop = order.filter(i => this.score[i] === top).length === 1;
 
     let label = 'SCOREBOARD', cls = 'info';
     if (final) {
-      label = title || (/forfait/i.test(reason) || diff > 0 ? 'VICTOIRE' : diff < 0 ? 'DÉFAITE' : 'ÉGALITÉ');
-      cls = title ? 'lose' : label === 'VICTOIRE' ? 'win' : label === 'DÉFAITE' ? 'lose' : 'draw';
+      if (title) { label = title; cls = 'lose'; }
+      else if (winner === me) { label = 'VICTOIRE'; cls = 'win'; }
+      else if (winner === -1) { label = 'ÉGALITÉ'; cls = 'draw'; }
+      else { label = 'DÉFAITE'; cls = 'lose'; }
     }
 
     const rows = order.map((i, r) => {
       const d = this.stats[i].d, k = this.score[i];
-      const topClass = r === 0 && this.score[0] !== this.score[1] ? ' top' : '';
-      return `<tr class="${i === me ? 'me' : ''}${topClass}"><td>${r + 1}</td>` +
-        `<td>${esc(name(i))}${i === 0 ? '<em>HÔTE</em>' : ''}</td>` +
+      const classes = [i === me ? 'me' : '', r === 0 && uniqueTop ? 'top' : '', this.gone.has(i) ? 'gone' : ''].join(' ').trim();
+      return `<tr class="${classes}"><td>${r + 1}</td>` +
+        `<td>${esc(this.nameOf(i))}${i === 0 ? '<em>HÔTE</em>' : ''}${this.gone.has(i) ? '<em class="gone">PARTI</em>' : ''}</td>` +
         `<td>${k}</td><td>${d}</td><td>${(d ? k / d : k).toFixed(2)}</td><td>${this.stats[i].h}</td></tr>`;
     }).join('');
 
     const mode = this.config?.mode === 'time' ? 'MEILLEUR SCORE AU TEMPS' : `PREMIER À ${this.config?.target}`;
-    this.sbEl.innerHTML = `<div class="sb-panel">
-      <div class="sb-title ${cls}">${label}</div>
+    this.sbEl.innerHTML = `<div class="sb-panel${order.length > 8 ? ' compact' : ''}">
+      <div class="sb-title ${cls}">${esc(label)}</div>
       <div class="sb-sub">${esc(final ? reason : mode)}</div>
-      <table><thead><tr><th>#</th><th>JOUEUR</th><th>ÉLIMS</th><th>MORTS</th><th>K/D</th><th>TÊTES</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="sb-scroll"><table><thead><tr><th>#</th><th>JOUEUR</th><th>ÉLIMS</th><th>MORTS</th><th>K/D</th><th>TÊTES</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${final ? '<button id="sb-menu" class="primary">RETOUR AU MENU PRINCIPAL</button>' : '<div class="sb-hint">RELÂCHE TAB POUR FERMER</div>'}
     </div>`;
     this.sbEl.classList.toggle('final', final);
@@ -1017,17 +1070,6 @@ export class Game {
 
   hideScoreboard() {
     this.sbEl.classList.remove('show', 'final');
-  }
-
-  remoteDisconnected() {
-    if (!this.active) return;
-    if (this.host) {
-      this.controller.enabled = false;
-      this.hud.message('Adversaire déconnecté — reconnexion pendant 30 secondes…');
-      this.disconnectDeadline = performance.now() + 30000;
-    } else {
-      this.finish('Connexion perdue avec l’hôte', 'CONNEXION PERDUE');
-    }
   }
 
   resize() {
@@ -1046,7 +1088,7 @@ export class Game {
     const dt = raw * this.timeScale;
 
     if (this.active) {
-      if (!this.disconnectDeadline) this.controller.update(dt);
+      this.controller.update(dt);
 
       const p = this.controller.position;
       this.moveSpeed = dt > 0 ? Math.hypot(p.x - this.lastPos.x, p.z - this.lastPos.z) / dt : 0;
@@ -1075,23 +1117,24 @@ export class Game {
 
       if (this.host) this.hostTick(raw, now);
 
-      // Synchronisation réseau à 30 Hz
+      // Synchronisation réseau à 20 Hz
       this.netAcc += raw;
       if (this.active && this.netAcc >= NET_DT) {
         this.netAcc = 0;
         if (this.host) {
+          const pos = {};
+          for (const id of this.ids) {
+            pos[id] = encode(id === this.me ? this.snap() : (this.remotes.get(id)?.n ?? { x: 0, z: 0 }));
+          }
           this.network.send(MSG.STATE, {
-            state: {
-              hp: this.hp, score: this.score, dead: this.dead, time: this.clockValue,
-              hostPos: this.snap()
-            }
+            state: { hp: this.hp, score: this.score, dead: this.dead, time: this.clockValue, pos }
           });
         } else {
-          this.network.send(MSG.INPUT, { input: this.snap() });
+          this.network.send(MSG.INPUT, { input: encode(this.snap()) });
         }
       }
 
-      this.updateRemote(dt);
+      this.updateRemotes(dt);
       this.updateWeaponAnimation(dt);
       this.updateFx(dt);
       if (this.sbHeld && !this.finalShown) this.showScoreboard(false);
