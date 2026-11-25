@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="fr">
   <head>
@@ -26,31 +25,38 @@
 
       <!-- ================= MENU PRINCIPAL ================= -->
 
-      <main id="menu" class="screen">
-        <div class="brand">
-          <span>CLASH</span><i>//</i><span>ROOM</span>
-        </div>
+      <main id="menu" class="screen menu-screen">
 
-        <p class="eyebrow">
-          SALON PRIVÉ · 2 À 16 JOUEURS · EN LIGNE
-        </p>
+        <!-- Colonne gauche : identité + action principale -->
+        <div class="menu-left">
+          <div class="brand">
+            <span>CLASH</span><i>//</i><span>ROOM</span>
+          </div>
 
-        <section class="panel menu-panel">
+          <p class="eyebrow">
+            SALON PRIVÉ · 2 À 16 JOUEURS · EN LIGNE
+          </p>
 
-          <label for="nickname">TON PSEUDO</label>
+          <section class="panel glass menu-card">
+            <header class="menu-card-head">
+              <span class="menu-tag">JOUER</span>
+              <span class="menu-sub">CONFIGURATION RAPIDE</span>
+            </header>
 
-          <input
-            id="nickname"
-            maxlength="16"
-            autocomplete="nickname"
-            placeholder="Joueur"
-          />
+            <label for="nickname">TON PSEUDO</label>
 
-          <div class="menu-actions">
+            <input
+              id="nickname"
+              maxlength="16"
+              autocomplete="nickname"
+              placeholder="Joueur"
+            />
 
-            <button id="create-room" class="primary">
+            <button id="create-room" class="primary big">
               CRÉER UN SALON
             </button>
+
+            <div class="menu-divider"><span>OU REJOINS UNE PARTIE</span></div>
 
             <div class="join-row">
               <input
@@ -60,35 +66,57 @@
                 autocomplete="off"
                 spellcheck="false"
               />
-
               <button id="join-room">
                 REJOINDRE
               </button>
             </div>
 
+            <p
+              id="menu-status"
+              class="status"
+              aria-live="polite"
+            >
+              Prêt à jouer ? Invite un ami.
+            </p>
+          </section>
+
+          <div class="menu-footer-row">
+            <button id="open-settings" class="quiet">
+              ⚙ PARAMÈTRES
+            </button>
           </div>
 
-          <p
-            id="menu-status"
-            class="status"
-            aria-live="polite"
-          >
-            Prêt à jouer ? Invite un ami.
+          <p class="footnote">
+            NAVIGATEUR DESKTOP · CHROME / FIREFOX / EDGE / SAFARI
           </p>
+        </div>
 
-        </section>
+        <!-- Colonne centre : décoration HUD -->
+        <div class="menu-center" aria-hidden="true">
+          <div class="hud-decor">
+            <span class="hud-ring hud-ring-1"></span>
+            <span class="hud-ring hud-ring-2"></span>
+            <span class="hud-ring hud-ring-3"></span>
+            <span class="hud-cross-h"></span>
+            <span class="hud-cross-v"></span>
+            <span class="hud-dot"></span>
+            <span class="hud-label hud-label-tl">SECTEUR 07</span>
+            <span class="hud-label hud-label-br">LIVE // SESSION</span>
+          </div>
+          <div class="hud-watermark">CLASH</div>
+        </div>
 
-        <button id="open-settings" class="quiet">⚙ PARAMÈTRES</button>
-
-        <div id="friends-menu" class="panel friends"></div>
-
-        <p class="footnote">
-          NAVIGATEUR DESKTOP · CHROME / FIREFOX / EDGE / SAFARI
-        </p>
+        <!-- Colonne droite : amis -->
+        <div class="menu-right">
+          <div id="friends-menu" class="panel friends glass"></div>
+        </div>
       </main>
 
 
       <!-- ================= SALON ================= -->
+      <!-- Note : roster.js reconstruit cette section au runtime (layout plein
+           écran + scène 3D). Les IDs ci-dessous sont les seuls éléments
+           requis par le script. -->
 
       <main id="lobby" class="screen hidden">
 
@@ -103,13 +131,8 @@
           <h1>En attente des joueurs</h1>
 
           <div class="room-code-wrap">
-            <span id="display-code" class="room-code">
-              ------
-            </span>
-
-            <button id="copy-code" class="quiet">
-              COPIER
-            </button>
+            <span id="display-code" class="room-code">------</span>
+            <button id="copy-code" class="quiet">COPIER</button>
           </div>
 
           <p
@@ -126,21 +149,14 @@
 
               <label>
                 CONDITION DE VICTOIRE
-
                 <select id="win-mode">
-                  <option value="kills">
-                    Premier à X éliminations
-                  </option>
-
-                  <option value="time">
-                    Meilleur score au temps
-                  </option>
+                  <option value="kills">Premier à X éliminations</option>
+                  <option value="time">Meilleur score au temps</option>
                 </select>
               </label>
 
               <label id="target-wrap">
                 ÉLIMINATIONS
-
                 <select id="target-kills">
                   <option>5</option>
                   <option selected>10</option>
@@ -151,7 +167,6 @@
 
               <label id="duration-wrap" class="hidden">
                 DURÉE
-
                 <select id="duration">
                   <option value="120">2 minutes</option>
                   <option value="180" selected>3 minutes</option>
@@ -161,7 +176,6 @@
 
               <label>
                 ARSENAL
-
                 <select id="weapon-rule">
                   <option value="all">Toutes les armes</option>
                   <option value="shotgun">Fusil à pompe uniquement</option>
@@ -172,11 +186,7 @@
 
             </div>
 
-            <button
-              id="start-game"
-              class="primary wide"
-              disabled
-            >
+            <button id="start-game" class="primary wide" disabled>
               LANCER LA PARTIE
             </button>
 
@@ -186,8 +196,6 @@
             L'hôte configure les règles et lance la partie.
             De 2 à 16 joueurs, chacun pour soi.
           </p>
-
-          <div id="friends-lobby" class="friends"></div>
 
           <button id="open-settings-lobby" class="quiet">⚙ PARAMÈTRES</button>
 
@@ -210,8 +218,6 @@
 
         <div id="hud" class="hidden">
 
-          <!-- SCORE ET CHRONOMÈTRE -->
-
           <div class="top-hud">
 
             <div class="player-score">
@@ -231,61 +237,37 @@
 
           </div>
 
-
-          <!-- VISEUR ORIGINAL DU HUD -->
-
           <div class="crosshair">
             <span></span>
             <i></i>
           </div>
 
-
-          <!-- INFORMATIONS BASSES -->
-
           <div class="bottom-hud">
 
             <div class="health-block">
-
               <small>SANTÉ</small>
-
               <strong id="health">100</strong>
-
               <div class="health-track">
                 <span id="health-fill"></span>
               </div>
-
             </div>
 
             <div class="weapon-block">
-
-              <small id="weapon-name">
-                FUSIL D'ASSAUT
-              </small>
-
+              <small id="weapon-name">FUSIL D'ASSAUT</small>
               <strong>
                 <span id="ammo">30</span>
                 <em> / ∞</em>
               </strong>
-
-              <small>
-                R : RECHARGER · 1/2/3 : ARME
-              </small>
-
+              <small>R : RECHARGER · 1/2/3 : ARME</small>
             </div>
 
           </div>
-
-
-          <!-- MESSAGE DE PARTIE -->
 
           <div
             id="game-message"
             class="game-message hidden"
             aria-live="polite"
           ></div>
-
-
-          <!-- INDICATION SOURIS -->
 
           <div id="lock-hint">
             CLIQUE DANS LE JEU POUR VERROUILLER LA SOURIS
