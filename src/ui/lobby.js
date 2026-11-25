@@ -4,9 +4,11 @@ const $ = s => document.querySelector(s);
 
 /** Salon : 2 à 16 joueurs. L'hôte (id 0) tient la liste et la diffuse. */
 export class Lobby {
-  constructor(network, game) {
+  constructor(network, game, friends = null) {
     this.network = network;
     this.game = game;
+    this.friends = friends;
+    this.inRoom = false;
     this.players = [];   // [{ id, name }] — id réseau (0 = hôte)
     this.me = 0;
     this.started = false;
@@ -31,6 +33,24 @@ export class Lobby {
     n.on('error', m => this.status(m));
   }
 
+  /** État envoyé aux amis : salon ouvert / en partie. */
+  presence() {
+    const n = this.network;
+    return {
+      room: this.inRoom ? n.roomCode : null,
+      count: this.players.length,
+      open: this.inRoom && !this.started && !n.locked && this.players.length < MAX_PLAYERS,
+      ingame: this.started
+    };
+  }
+
+  /** Rejoint un salon à partir d'un code (invitation d'un ami). */
+  joinCode(code) {
+    if (this.inRoom || this.started) return;
+    $('#room-code').value = String(code || '').toUpperCase();
+    this.join();
+  }
+
   nickname() { return ($('#nickname').value || '').trim().slice(0, 16) || 'Joueur'; }
 
   status(text, el = '#lobby-status') {
@@ -41,6 +61,8 @@ export class Lobby {
   show(lobby) {
     $('#menu').classList.toggle('hidden', lobby);
     $('#lobby').classList.toggle('hidden', !lobby);
+    this.inRoom = lobby;
+    this.friends?.push();
     $('#host-settings').classList.toggle('hidden', !this.network.isHost);
   }
 
@@ -96,6 +118,7 @@ export class Lobby {
 
   render() {
     const n = this.players.length;
+    this.friends?.push();
     window.clashRoster?.set(this.players.map(p => ({ id: p.id, name: p.name, host: p.id === 0, me: p.id === this.me })));
     const start = $('#start-game');
     start.disabled = n < 2;
@@ -129,6 +152,7 @@ export class Lobby {
 
   begin(config, you, names) {
     this.started = true;
+    this.friends?.push();
     this.game.start(config, you, names);
   }
 
