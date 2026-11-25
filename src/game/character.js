@@ -63,29 +63,337 @@ export function gunModel(t) {
   return G;
 }
 
-function makeLabel(text) {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 64;
-  const g = c.getContext('2d');
-  g.font = '800 34px "Barlow Condensed", Arial, sans-serif';
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.lineWidth = 7; g.strokeStyle = 'rgba(0,0,0,.85)';
-  g.strokeText(text, 128, 34);
+
+/**
+ * Collection de cosmétiques 3D.
+ * Toutes les coordonnées sont exprimées dans head-model.
+ * Le personnage regarde vers -Z.
+ */
+export function accessoryModel(id) {
+  const root = new THREE.Group();
+  root.name = 'accessory';
+
+  if (!id || id === 'none') return root;
+
+  const mat = (color, metalness = 0, roughness = 0.75) =>
+    new THREE.MeshStandardMaterial({ color, metalness, roughness });
+
+  const addBox = (size, material, x, y, z, rotation = [0, 0, 0]) => {
+    const m = box(root, size, material, x, y, z);
+    m.rotation.set(...rotation);
+    return m;
+  };
+
+  const addSphere = (material, x, y, z, sx, sy, sz) => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), material);
+    m.position.set(x, y, z);
+    m.scale.set(sx, sy, sz);
+    root.add(m);
+    return m;
+  };
+
+  const addCylinder = (radius, height, material, x, y, z, rotation = [0, 0, 0]) => {
+    const m = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius, height, 12),
+      material
+    );
+    m.position.set(x, y, z);
+    m.rotation.set(...rotation);
+    root.add(m);
+    return m;
+  };
+
+  const addCone = (radius, height, material, x, y, z, rotation = [0, 0, 0]) => {
+    const m = new THREE.Mesh(
+      new THREE.ConeGeometry(radius, height, 8),
+      material
+    );
+    m.position.set(x, y, z);
+    m.rotation.set(...rotation);
+    root.add(m);
+    return m;
+  };
+
+  const addTorus = (radius, tube, material, x, y, z, rotation = [0, 0, 0]) => {
+    const m = new THREE.Mesh(
+      new THREE.TorusGeometry(radius, tube, 6, 16),
+      material
+    );
+    m.position.set(x, y, z);
+    m.rotation.set(...rotation);
+    root.add(m);
+    return m;
+  };
+
+  const black = mat(0x20242c);
+  const white = mat(0xe8e5dc);
+  const gold = mat(0xe6b83f, 0.75, 0.25);
+  const silver = mat(0xb9c4cc, 0.8, 0.25);
+  const red = mat(0xd64b42);
+  const blue = mat(0x397fc4);
+  const purple = mat(0x9560d1);
+  const green = mat(0x42a66a);
+
+  switch (id) {
+    // CHAPEAUX
+    case 'cap':
+      addSphere(white, 0, 1.92, 0.015, 0.245, 0.13, 0.245);
+      addBox([0.46, 0.035, 0.2], white, 0, 1.89, -0.19);
+      break;
+
+    case 'red_cap':
+      addSphere(red, 0, 1.92, 0.015, 0.245, 0.13, 0.245);
+      addBox([0.46, 0.035, 0.2], red, 0, 1.89, -0.19);
+      break;
+
+    case 'bucket_hat':
+      addBox([0.54, 0.045, 0.54], green, 0, 1.94, 0);
+      addSphere(green, 0, 1.99, 0.01, 0.18, 0.13, 0.18);
+      break;
+
+    case 'top_hat':
+      addBox([0.53, 0.045, 0.53], black, 0, 1.95, 0);
+      addCylinder(0.16, 0.3, black, 0, 2.11, 0);
+      addBox([0.3, 0.025, 0.3], gold, 0, 2.03, -0.01);
+      break;
+
+    case 'crown':
+      addBox([0.44, 0.055, 0.42], gold, 0, 1.96, 0);
+      for (let i = -2; i <= 2; i++) {
+        addCone(0.055, 0.16, gold, i * 0.095, 2.065, 0);
+      }
+      break;
+
+    case 'beanie':
+      addSphere(red, 0, 1.94, 0, 0.235, 0.18, 0.235);
+      addBox([0.45, 0.065, 0.44], white, 0, 1.84, 0);
+      addSphere(white, 0, 2.105, 0, 0.055, 0.055, 0.055);
+      break;
+
+    case 'wizard_hat':
+      addBox([0.55, 0.04, 0.55], purple, 0, 1.95, 0);
+      addCone(0.25, 0.52, purple, 0, 2.21, 0);
+      addSphere(gold, 0, 1.99, -0.02, 0.035, 0.035, 0.035);
+      break;
+
+    // BANDEAUX ET BANDANAS
+    case 'headband':
+    case 'bandana':
+      addBox([0.47, 0.07, 0.48], id === 'bandana' ? red : blue, 0, 1.86, 0);
+      addBox([0.44, 0.035, 0.025], white, 0, 1.86, -0.24);
+      if (id === 'bandana') {
+        addBox([0.12, 0.08, 0.13], red, 0.22, 1.79, 0.13, [0, 0, -0.4]);
+      }
+      break;
+
+    // LUNETTES
+    case 'glasses':
+    case 'sunglasses':
+    case 'neon_glasses': {
+      const frame = id === 'neon_glasses' ? green : black;
+      const lens = id === 'glasses' ? white : mat(0x172d45, 0.2, 0.2);
+      for (const side of [-1, 1]) {
+        addBox([0.18, 0.105, 0.035], frame, side * 0.105, 1.76, -0.245);
+        addBox([0.135, 0.065, 0.012], lens, side * 0.105, 1.76, -0.266);
+      }
+      addBox([0.07, 0.025, 0.025], frame, 0, 1.78, -0.25);
+      break;
+    }
+
+    case 'monocle':
+      addTorus(0.075, 0.012, gold, 0.105, 1.76, -0.25);
+      addBox([0.012, 0.12, 0.012], gold, 0.105, 1.66, -0.24);
+      break;
+
+    // MASQUES
+    case 'mask':
+    case 'ninja_mask':
+    case 'medical_mask': {
+      const material = id === 'ninja_mask' ? black :
+        id === 'medical_mask' ? blue : green;
+      addBox([0.36, 0.15, 0.045], material, 0, 1.65, -0.255);
+      addBox([0.36, 0.025, 0.025], white, 0, 1.70, -0.28);
+      break;
+    }
+
+    case 'skull_mask':
+      addBox([0.36, 0.19, 0.045], white, 0, 1.65, -0.255);
+      addBox([0.09, 0.07, 0.025], black, -0.09, 1.67, -0.282);
+      addBox([0.09, 0.07, 0.025], black, 0.09, 1.67, -0.282);
+      addBox([0.12, 0.035, 0.025], black, 0, 1.61, -0.282);
+      break;
+
+    // ÉQUIPEMENTS
+    case 'headphones':
+      addTorus(0.22, 0.035, black, 0, 1.79, 0.015);
+      for (const side of [-1, 1]) {
+        addBox([0.09, 0.19, 0.09], black, side * 0.235, 1.76, 0);
+        addBox([0.065, 0.12, 0.025], blue, side * 0.235, 1.76, -0.05);
+      }
+      break;
+
+    case 'military_helmet':
+      addSphere(mat(0x52684a), 0, 1.96, 0, 0.255, 0.16, 0.255);
+      addBox([0.48, 0.04, 0.44], mat(0x52684a), 0, 1.91, -0.015);
+      break;
+
+    case 'space_helmet':
+      addSphere(mat(0x8dc9e5, 0.35, 0.2), 0, 1.77, 0, 0.3, 0.31, 0.3);
+      addBox([0.37, 0.22, 0.035], mat(0x347caa, 0.6, 0.2), 0, 1.77, -0.265);
+      break;
+
+    // FANTAISIE
+    case 'devil_horns':
+      for (const side of [-1, 1]) {
+        addCone(0.075, 0.27, red, side * 0.16, 2.08, 0,
+          [0, 0, side * -0.32]);
+      }
+      break;
+
+    case 'angel_halo':
+      addTorus(0.2, 0.025, gold, 0, 2.13, 0);
+      break;
+
+    case 'cat_ears':
+      for (const side of [-1, 1]) {
+        addCone(0.12, 0.25, black, side * 0.16, 2.02, 0);
+      }
+      break;
+
+    case 'bunny_ears':
+      for (const side of [-1, 1]) {
+        addSphere(white, side * 0.12, 2.08, 0, 0.065, 0.21, 0.06);
+        addSphere(red, side * 0.12, 2.08, -0.05, 0.025, 0.15, 0.012);
+      }
+      break;
+
+    case 'robot_antenna':
+      addCylinder(0.018, 0.2, silver, 0, 2.04, 0);
+      addSphere(green, 0, 2.15, 0, 0.06, 0.06, 0.06);
+      break;
+
+    case 'flower':
+      addSphere(gold, 0.19, 1.96, -0.06, 0.055, 0.055, 0.055);
+      for (let i = 0; i < 5; i++) {
+        const a = i * Math.PI * 2 / 5;
+        addSphere(red,
+          0.19 + Math.cos(a) * 0.075,
+          1.96 + Math.sin(a) * 0.075,
+          -0.06,
+          0.045, 0.045, 0.035);
+      }
+      break;
+
+    case 'star':
+      addCone(0.13, 0.24, gold, 0, 2.08, 0);
+      break;
+
+    case 'earrings':
+      for (const side of [-1, 1]) {
+        addTorus(0.045, 0.012, gold, side * 0.26, 1.62, -0.015,
+          [Math.PI / 2, 0, 0]);
+      }
+      break;
+
+    case 'piercing':
+      addSphere(silver, 0.14, 1.68, -0.28, 0.025, 0.025, 0.025);
+      break;
+
+    default:
+      // Accessoire inconnu : groupe vide, sans erreur.
+      break;
+  }
+
+  root.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.userData.cosmetic = id;
+    }
+  });
+
+  return root;
+}
+
+function drawInputIcon(g, inputType) {
+  g.save();
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 3.5;
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+
+  if (inputType === 'gamepad') {
+    g.beginPath();
+    g.moveTo(12, 34);
+    g.lineTo(19, 20);
+    g.quadraticCurveTo(21, 17, 26, 17);
+    g.lineTo(53, 17);
+    g.quadraticCurveTo(59, 17, 61, 23);
+    g.lineTo(67, 39);
+    g.quadraticCurveTo(69, 46, 63, 46);
+    g.quadraticCurveTo(59, 46, 54, 41);
+    g.lineTo(24, 41);
+    g.quadraticCurveTo(19, 46, 15, 46);
+    g.quadraticCurveTo(9, 46, 11, 39);
+    g.closePath();
+    g.stroke();
+    g.beginPath();
+    g.moveTo(25, 25); g.lineTo(25, 35);
+    g.moveTo(20, 30); g.lineTo(30, 30);
+    g.moveTo(52, 27); g.lineTo(52, 28);
+    g.moveTo(59, 33); g.lineTo(59, 34);
+    g.stroke();
+  } else {
+    g.strokeRect(11, 18, 57, 29);
+    for (let row = 0; row < 2; row++) {
+      for (let column = 0; column < 5; column++) {
+        g.strokeRect(17 + column * 9, 23 + row * 9, 5, 4);
+      }
+    }
+    g.beginPath();
+    g.moveTo(27, 42); g.lineTo(52, 42);
+    g.stroke();
+  }
+  g.restore();
+}
+
+function renderLabel(sprite, text, inputType) {
+  const canvas = sprite.userData.labelCanvas;
+  const g = canvas.getContext('2d');
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  drawInputIcon(g, inputType);
+  g.font = '800 31px "Barlow Condensed", Arial, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.lineWidth = 7;
+  g.strokeStyle = 'rgba(0,0,0,.85)';
+  g.strokeText(String(text).slice(0, 16), 235, 34);
   g.fillStyle = '#ffffff';
-  g.fillText(text, 128, 34);
+  g.fillText(String(text).slice(0, 16), 235, 34);
+  sprite.material.map.needsUpdate = true;
+}
+
+function makeLabel(text, inputType) {
+  const c = document.createElement('canvas');
+  c.width = 384; c.height = 64;
   const s = new THREE.Sprite(new THREE.SpriteMaterial({
     map: new THREE.CanvasTexture(c), transparent: true, fog: false
   }));
+  s.userData.labelCanvas = c;
   s.scale.set(1.5, 0.375, 1);
   s.position.set(0, 2.42, 0);
+  renderLabel(s, text, inputType);
   return s;
+}
+
+export function updateCharacterLabel(character, text, inputType) {
+  if (character.label) renderLabel(character.label, text, inputType);
 }
 
 /**
  * Personnage low-poly. Origine = sous les pieds (y = 0 : semelles au sol), il regarde vers -Z.
  * Retourne { group, arms:[gauche, droit], legs:[gauche, droite], guns:{...} }.
  */
-export function createCharacter({ shirt = 0xc94f36, label = null, appearance = null } = {}) {
+export function createCharacter({ shirt = 0xc94f36, label = null, inputType = 'keyboard', appearance = null } = {}) {
   const look = appearance ? normalizeAppearance(appearance) : null;
   const color = (category, fallback) => {
     if (!look) return fallback;
@@ -119,104 +427,311 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
   // --- TÊTE ---
   box(headModel, [0.43, 0.43, 0.43], skin, 0, 1.72, 0);
 
-  // Cheveux : volume principal
+  // --- CHEVEUX : GÉOMÉTRIE CORRIGÉE ---
+
   const hair = M(color('hairColor', 0x493326), 'hairColor');
+
   const hairGroup = new THREE.Group();
   hairGroup.name = 'hair';
   headModel.add(hairGroup);
+
   const hairStyle = look?.hairStyle ?? 'classic';
-  const hairBox = (size, x, y, z) => box(hairGroup, size, hair, x, y, z);
-  const hairBall = (x, y, z, scale) => {
-    const curl = new THREE.Mesh(new THREE.IcosahedronGeometry(0.1, 0), hair);
-    curl.name = `curl-${hairGroup.children.length}`;
-    curl.position.set(x, y, z);
-    curl.scale.set(...scale);
-    hairGroup.add(curl);
+
+  // Toutes les coordonnées sont exprimées dans headModel.
+  // Le visage regarde vers -Z.
+  // Le sommet du crâne est à y = 1.935.
+
+  const hairBox = (size, x, y, z, rotation = [0, 0, 0]) => {
+    const mesh = box(hairGroup, size, hair, x, y, z);
+    mesh.rotation.set(...rotation);
+    return mesh;
   };
-  const crown = (height = 0.15, y = 1.96, width = 0.47) =>
-    hairBox([width, height, 0.47], 0, y, 0);
-  const fringe = () => hairBox([0.43, 0.1, 0.13], 0, 1.88, -0.19);
-  const sides = (height = 0.19, y = 1.82, width = 0.09) => {
-    hairBox([width, height, 0.44], -0.2, y, 0);
-    hairBox([width, height, 0.44], 0.2, y, 0);
+
+  const hairBall = (x, y, z, sx, sy, sz) => {
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1, 1),
+      hair
+    );
+
+    mesh.name = `hair-volume-${hairGroup.children.length}`;
+    mesh.position.set(x, y, z);
+    mesh.scale.set(sx, sy, sz);
+    hairGroup.add(mesh);
+    return mesh;
   };
-  const spikes = (count, height, width = 0.09) => {
-    for (let i = 0; i < count; i++) {
-      const x = (i - (count - 1) / 2) * 0.085;
-      const spikeHeight = height * (i % 2 === 0 ? 1 : 0.76);
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(width, spikeHeight, 5), hair);
-      spike.name = `spike-${hairGroup.children.length}`;
-      spike.position.set(x, 2.04 + spikeHeight * 0.18, 0);
-      spike.rotation.z = (i - (count - 1) / 2) * 0.15;
+
+  // Volume supérieur : recouvre le crâne sans flotter.
+  const crown = (height = 0.12, width = 0.46, depth = 0.46) => {
+    return hairBox(
+      [width, height, depth],
+      0,
+      1.935 + height * 0.35,
+      0
+    );
+  };
+
+  // Mèches latérales : suivent les contours de la tête.
+  const sideLocks = (height = 0.22, width = 0.075, bottomY = 1.69) => {
+    const centerY = bottomY + height / 2;
+
+    for (const side of [-1, 1]) {
+      hairBox(
+        [width, height, 0.34],
+        side * 0.19,
+        centerY,
+        0.015
+      );
+    }
+  };
+
+  // Frange frontale, placée devant le front.
+  const fringe = (width = 0.39, height = 0.09) => {
+    hairBox(
+      [width, height, 0.075],
+      0,
+      1.875,
+      -0.205
+    );
+  };
+
+  // Volume arrière pour les coiffures longues.
+  const backHair = (height, width = 0.34) => {
+    hairBox(
+      [width, height, 0.105],
+      0,
+      1.91 - height / 2,
+      0.19
+    );
+  };
+
+  // Pointes verticales avec une base commune.
+  const spikes = (positions, height = 0.20, width = 0.075) => {
+    for (const [x, z, variation = 1] of positions) {
+      const h = height * variation;
+
+      const spike = new THREE.Mesh(
+        new THREE.ConeGeometry(width, h, 5),
+        hair
+      );
+
+      spike.name = `hair-spike-${hairGroup.children.length}`;
+      spike.position.set(x, 1.93 + h / 2, z);
+
+      // Légère inclinaison, sans pointes désordonnées.
+      spike.rotation.z = -x * 0.35;
+      spike.rotation.x = z * 0.15;
+
       hairGroup.add(spike);
     }
   };
 
-  if (hairStyle === 'buzz') {
-    crown(0.07, 1.94, 0.44);
-    sides(0.12, 1.82, 0.035);
-  } else if (hairStyle === 'fade') {
-    crown(0.12, 1.96, 0.46);
-    sides(0.14, 1.82, 0.045);
-    fringe();
-  } else if (hairStyle === 'afro') {
-    hairBall(0, 1.98, 0, [1.35, 1.15, 1.3]);
-    [[-0.18, 1.99, -0.14], [0, 2.09, -0.12], [0.18, 1.99, -0.14],
-      [-0.2, 1.91, 0.08], [0.2, 1.91, 0.08]].forEach(([x, y, z]) =>
-      hairBall(x, y, z, [0.95, 0.9, 0.95]));
-  } else if (hairStyle === 'curly') {
-    crown(0.1, 1.96, 0.46);
-    for (const x of [-0.16, 0, 0.16]) {
-      for (const z of [-0.15, 0.04, 0.2]) {
-        hairBall(x, z < 0 ? 2.01 : 2.03, z, [0.82, 0.78, 0.82]);
-      }
+  // Boucles disposées sur la surface supérieure du crâne.
+  const curlyTop = () => {
+    const positions = [
+      [-0.15, -0.13],
+      [0, -0.16],
+      [0.15, -0.13],
+      [-0.19, 0.02],
+      [-0.06, 0.015],
+      [0.08, 0.015],
+      [0.19, 0.02],
+      [-0.14, 0.15],
+      [0, 0.17],
+      [0.14, 0.15]
+    ];
+
+    for (const [x, z] of positions) {
+      hairBall(x, 1.975, z, 0.075, 0.075, 0.075);
     }
-    hairBall(-0.21, 1.84, 0.02, [0.65, 0.85, 0.85]);
-    hairBall(0.21, 1.84, 0.02, [0.65, 0.85, 0.85]);
-  } else if (hairStyle === 'mohawk') {
-    crown(0.055, 1.92, 0.44);
-    sides(0.11, 1.81, 0.04);
-    hairBox([0.15, 0.18, 0.42], 0, 2.02, 0);
-    spikes(5, 0.2, 0.075);
-    fringe();
-  } else if (hairStyle === 'long' || hairStyle === 'bob' || hairStyle === 'ponytail') {
-    crown();
-    fringe();
-    const length = hairStyle === 'long' ? 0.5 : hairStyle === 'bob' ? 0.35 : 0.2;
-    const y = hairStyle === 'long' ? 1.68 : hairStyle === 'bob' ? 1.75 : 1.82;
-    sides(length, y, 0.1);
-    if (hairStyle === 'ponytail') {
-      hairBox([0.14, 0.34, 0.14], 0.12, 1.7, 0.26);
-      hairBox([0.16, 0.05, 0.16], 0.12, 1.86, 0.26);
+  };
+
+  switch (hairStyle) {
+
+    // Très courte : uniquement une couche supérieure.
+    case 'buzz': {
+      crown(0.065, 0.44, 0.44);
+      sideLocks(0.12, 0.035, 1.75);
+      break;
     }
-  } else if (hairStyle === 'bun') {
-    crown();
-    fringe();
-    sides();
-    hairBall(0, 2.04, 0.2, [0.75, 0.75, 0.75]);
-  } else if (hairStyle === 'sidepart') {
-    crown();
-    fringe();
-    sides();
-    hairBox([0.24, 0.08, 0.15], 0.08, 1.92, -0.15);
-    hairBox([0.12, 0.045, 0.12], -0.11, 2.045, -0.04);
-  } else if (hairStyle === 'undercut') {
-    crown(0.16, 1.97);
-    fringe();
-    sides(0.12, 1.78, 0.04);
-    hairBox([0.24, 0.09, 0.15], 0.1, 1.93, -0.15);
-  } else {
-    crown();
-    fringe();
-    sides();
-    if (hairStyle === 'spiky') {
-      spikes(7, 0.25, 0.08);
-    } else if (hairStyle === 'classic') {
-      hairBox([0.23, 0.08, 0.15], -0.075, 2.035, -0.14);
-      hairBox([0.16, 0.06, 0.13], 0.09, 1.99, -0.17);
-    } else {
-      hairBox([0.16, 0.07, 0.13], -0.1, 2.045, -0.06);
-      hairBox([0.13, 0.06, 0.12], 0.1, 2.045, 0.02);
+
+    // Dégradé : dessus plus épais, côtés très courts.
+    case 'fade': {
+      crown(0.13, 0.46, 0.46);
+      sideLocks(0.13, 0.035, 1.75);
+      fringe(0.40, 0.075);
+      break;
+    }
+
+    // Afro : une seule masse volumique cohérente.
+    case 'afro': {
+      hairBall(0, 2.005, 0, 0.265, 0.225, 0.265);
+
+      // Quelques petites irrégularités sur le contour,
+      // intégrées à la masse principale.
+      [
+        [-0.20, 1.99, 0],
+        [0.20, 1.99, 0],
+        [-0.13, 2.08, 0.10],
+        [0.13, 2.08, 0.10],
+        [0, 2.09, -0.13]
+      ].forEach(([x, y, z]) => {
+        hairBall(x, y, z, 0.075, 0.075, 0.075);
+      });
+
+      break;
+    }
+
+    // Cheveux bouclés : boucles localisées sur le dessus.
+    case 'curly': {
+      crown(0.055, 0.43, 0.43);
+      curlyTop();
+      sideLocks(0.17, 0.065, 1.75);
+      break;
+    }
+
+    // Crête iroquoise : une ligne centrale de pointes.
+    case 'mohawk': {
+      crown(0.065, 0.44, 0.43);
+      sideLocks(0.12, 0.035, 1.77);
+
+      hairBox([0.13, 0.12, 0.38], 0, 1.985, 0);
+
+      spikes([
+        [0, -0.16, 0.8],
+        [0, -0.08, 1],
+        [0, 0, 1.15],
+        [0, 0.08, 1],
+        [0, 0.16, 0.8]
+      ], 0.20, 0.065);
+
+      break;
+    }
+
+    // Cheveux longs : mèches jusqu'aux épaules.
+    case 'long': {
+      crown(0.14);
+      fringe(0.40, 0.09);
+      sideLocks(0.55, 0.085, 1.43);
+      backHair(0.52, 0.34);
+      break;
+    }
+
+    // Carré : volume latéral à hauteur de mâchoire.
+    case 'bob': {
+      crown(0.13);
+      fringe(0.40, 0.09);
+      sideLocks(0.34, 0.09, 1.62);
+      backHair(0.33, 0.36);
+      break;
+    }
+
+    // Queue de cheval : cheveux attachés derrière.
+    case 'ponytail': {
+      crown(0.13);
+      fringe(0.40, 0.085);
+      sideLocks(0.22, 0.075, 1.69);
+
+      // Attache arrière.
+      hairBall(0, 1.82, 0.22, 0.075, 0.075, 0.075);
+
+      // Queue orientée vers l'arrière et vers le bas.
+      const tail = hairBox(
+        [0.13, 0.38, 0.13],
+        0.025,
+        1.60,
+        0.34,
+        [-0.22, 0, -0.08]
+      );
+
+      break;
+    }
+
+    // Chignon : volume attaché à l'arrière du crâne.
+    case 'bun': {
+      crown(0.13);
+      fringe(0.40, 0.085);
+      sideLocks(0.20, 0.075, 1.70);
+
+      hairBall(0, 2.015, 0.245, 0.12, 0.12, 0.12);
+      break;
+    }
+
+    // Raie sur le côté.
+    case 'sidepart': {
+      crown(0.14);
+      sideLocks(0.20, 0.075, 1.69);
+
+      // Mèche frontale orientée vers un côté.
+      hairBox(
+        [0.28, 0.09, 0.105],
+        -0.065,
+        1.88,
+        -0.205,
+        [0, 0, -0.12]
+      );
+
+      hairBox(
+        [0.15, 0.055, 0.12],
+        0.12,
+        1.96,
+        -0.11,
+        [0, 0, 0.12]
+      );
+
+      break;
+    }
+
+    // Dessus long, côtés rasés.
+    case 'undercut': {
+      crown(0.17, 0.45, 0.46);
+      sideLocks(0.13, 0.035, 1.75);
+      fringe(0.40, 0.09);
+
+      hairBox(
+        [0.22, 0.07, 0.14],
+        0.08,
+        2.025,
+        -0.12
+      );
+
+      break;
+    }
+
+    // Cheveux hérissés.
+    case 'spiky': {
+      crown(0.075, 0.44, 0.43);
+      sideLocks(0.16, 0.045, 1.72);
+
+      spikes([
+        [-0.15, -0.09, 0.8],
+        [-0.075, -0.12, 1],
+        [0, -0.13, 1.1],
+        [0.075, -0.12, 1],
+        [0.15, -0.09, 0.8],
+        [-0.09, 0.07, 0.8],
+        [0.09, 0.07, 0.8]
+      ], 0.23, 0.065);
+
+      break;
+    }
+
+    // Coupe classique.
+    case 'classic':
+    default: {
+      crown(0.14);
+      fringe(0.40, 0.09);
+      sideLocks(0.20, 0.075, 1.69);
+
+      // Mèche supérieure décalée pour un aspect naturel.
+      hairBox(
+        [0.22, 0.065, 0.15],
+        -0.07,
+        2.005,
+        -0.08,
+        [0, 0, -0.08]
+      );
+
+      break;
     }
   }
 
@@ -261,22 +776,8 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
   box(face, [0.105, 0.025, 0.025], mouth,
     0, 1.61, -0.225);
 
-  const accessory = new THREE.Group();
-  accessory.name = 'accessory';
+  const accessory = accessoryModel(look?.accessory);
   headModel.add(accessory);
-  if (look?.accessory === 'cap') {
-    const cap = M(0xd1d2cb);
-    box(accessory, [0.49, 0.1, 0.48], cap, 0, 2.015, 0);
-    box(accessory, [0.48, 0.035, 0.22], cap, 0, 1.965, -0.2);
-  } else if (look?.accessory === 'headband') {
-    box(accessory, [0.47, 0.065, 0.48], M(0xf07845), 0, 1.86, 0);
-    box(accessory, [0.44, 0.07, 0.025], M(0xf07845), 0, 1.86, -0.23);
-  } else if (look?.accessory === 'glasses') {
-    const frame = M(0x252b32);
-    box(accessory, [0.17, 0.1, 0.035], frame, -0.105, 1.76, -0.245);
-    box(accessory, [0.17, 0.1, 0.035], frame, 0.105, 1.76, -0.245);
-    box(accessory, [0.08, 0.03, 0.03], frame, 0, 1.78, -0.25);
-  }
 
   const arms = [], legs = [];
   [-1, 1].forEach(s => {
@@ -376,7 +877,7 @@ export function createCharacter({ shirt = 0xc94f36, label = null, appearance = n
   };
 
   let sprite = null;
-  if (label) { sprite = makeLabel(label); g.add(sprite); }
+  if (label) { sprite = makeLabel(label, inputType); g.add(sprite); }
 
   return {
     group: g,

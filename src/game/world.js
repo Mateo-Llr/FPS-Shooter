@@ -230,7 +230,7 @@ export class World {
         z: Math.sin(angle) * (this.halfDepth - 4.5)
       };
       this.resolve(position);
-      return { ...position, yaw: Math.atan2(-position.x, -position.z) };
+      return { ...position, yaw: Math.atan2(position.x, position.z) };
     });
   }
 

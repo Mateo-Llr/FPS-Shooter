@@ -9,6 +9,7 @@ import { SettingsUI } from './ui/settings.js';
 import { CustomizationUI } from './ui/customization.js';
 import { GamepadNavigator } from './game/gamepad.js';
 import { ProgressUI } from './ui/progress.js';
+import { ShopUI } from './ui/shop.js';
 import { editorEnabled, initializeEditorAssets } from './editor/editor-bridge.js';
 
 function bootstrap() {
@@ -23,6 +24,7 @@ function bootstrap() {
     quests: document.querySelector('#quests-panel'),
     achievements: document.querySelector('#achievements-panel')
   });
+  new ShopUI(document.querySelector('#shop-panel'));
 
   new Roster(friends);
   lobby.init();

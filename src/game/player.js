@@ -29,6 +29,7 @@ export class PlayerController {
     this.onShoot = null;
     this.lastShot = null;
     this.weapon = "rifle";
+    this.inputType = "keyboard";
 
     this.firing = false;
     this.aiming = false;
@@ -54,6 +55,7 @@ export class PlayerController {
     }, true);
 
     document.addEventListener("keydown", (e) => {
+      if (this.enabled && !e.repeat) this.inputType = "keyboard";
       this.keys[e.code] = true;
 
       if (
@@ -94,6 +96,7 @@ export class PlayerController {
         return;
       }
 
+      this.inputType = "keyboard";
       const sens = (this.camera.fov / 75) * settings.data.sens; // réduite quand on zoome
       this.yaw -= e.movementX * 0.0022 * sens;
 
@@ -110,6 +113,7 @@ export class PlayerController {
         this.enabled &&
         document.pointerLockElement === this.canvas
       ) {
+        this.inputType = "keyboard";
         this.mouseFiring = true;
         this.firing = true;
         this.tryShoot();
@@ -120,6 +124,7 @@ export class PlayerController {
 
     document.addEventListener("mousedown", (e) => {
       if (e.button === 2 && this.enabled && document.pointerLockElement === this.canvas) {
+        this.inputType = "keyboard";
         this.mouseAiming = true;
         this.aiming = true;
       }
@@ -180,10 +185,17 @@ export class PlayerController {
     const pad = this.gamepad.pad();
     const gamepadForward = this.gamepad.axis(1);
     const gamepadSide = this.gamepad.axis(0);
+    const gamepadLookX = this.gamepad.axis(2);
+    const gamepadLookY = this.gamepad.axis(3);
+
+    if (pad && (
+      gamepadForward || gamepadSide || gamepadLookX || gamepadLookY ||
+      pad.buttons.some(button => button.pressed || button.value > 0.18)
+    )) this.inputType = "gamepad";
 
     if (pad) {
-      const rx = this.gamepad.axis(2);
-      const ry = this.gamepad.axis(3);
+      const rx = gamepadLookX;
+      const ry = gamepadLookY;
       if (rx || ry) {
         const sens = (this.camera.fov / 75) * settings.data.sens;
         const turn = 2.15 * sens * dt;

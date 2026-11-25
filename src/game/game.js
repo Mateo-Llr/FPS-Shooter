@@ -3,7 +3,7 @@ import { World } from './world.js';
 import { PlayerController } from './player.js';
 import { WeaponSystem, WEAPONS } from './weapons.js';
 import { HUD } from './hud.js';
-import { createCharacter, disposeCharacter, showGun, animateCharacter, gunModel, box, SHIRT_COLORS } from './character.js';
+import { createCharacter, disposeCharacter, showGun, updateCharacterLabel, animateCharacter, gunModel, box, SHIRT_COLORS } from './character.js';
 import { MSG, MAX_PLAYERS } from '../network/protocol.js';
 import { settings } from '../ui/settings.js';
 import { normalizeAppearance } from './customization.js';
@@ -24,6 +24,7 @@ const NET_DT = 1 / 20;
 const RESPAWN_TIME = 3;
 const SPAWN_PROTECTION = 1500;
 const WEAPON_IDS = ['shotgun', 'rifle', 'sniper', 'knife'];
+const INPUT_TYPES = new Set(['keyboard', 'gamepad']);
 
 // Mode « capture du drapeau » : drapeau au centre de la carte.
 // Il faut rester SEUL dans la zone `seconds` secondes (cumulées) pour atteindre 100 %.
@@ -136,6 +137,7 @@ export class Game {
     this.host = false;
     this.me = 0;
     this.names = [];          // names[id] = pseudo ou null
+    this.inputTypes = [];
     this.appearances = [];
     this.ids = [];            // ids des joueurs encore présents
     this.roster = [];         // ids de tous les joueurs du début de partie (scoreboard)
@@ -203,16 +205,18 @@ export class Game {
 
   /** Crée le modèle 3D d'un adversaire (un par joueur distant). */
   addRemote(id, spawn) {
+    const inputType = this.inputTypes[id] || 'keyboard';
     const ch = createCharacter({
       shirt: SHIRT_COLORS[id % SHIRT_COLORS.length],
       label: this.nameOf(id),
+      inputType,
       appearance: this.appearances[id]
     });
     this.scene.add(ch.group);
     ch.group.position.set(spawn.x, 0, spawn.z);
     ch.group.rotation.y = spawn.yaw;
     const r = { x: spawn.x, y: 0, z: spawn.z, yaw: spawn.yaw, pitch: 0, crouch: false, w: 'rifle', aim: false };
-    this.remotes.set(id, { id, ch, r, n: { ...r }, deadT: null });
+    this.remotes.set(id, { id, ch, r, n: { ...r }, deadT: null, inputType });
   }
 
   removeRemote(id) {
@@ -359,6 +363,16 @@ export class Game {
     const rem = this.remotes.get(d.from);
     if (!rem || !validPos(d.input)) return;
     Object.assign(rem.n, decode(d.input));
+    this.setRemoteInputType(d.from, d.inputType);
+  }
+
+  setRemoteInputType(id, inputType) {
+    if (!INPUT_TYPES.has(inputType)) return;
+    this.inputTypes[id] = inputType;
+    const rem = this.remotes.get(id);
+    if (!rem || rem.inputType === inputType) return;
+    rem.inputType = inputType;
+    updateCharacterLabel(rem.ch, this.nameOf(id), inputType);
   }
 
   /** Invité : reçoit l'état autoritaire (vie, scores, positions de tous les joueurs). */
@@ -375,6 +389,12 @@ export class Game {
       if (i === this.me || !validPos(a)) continue;
       const rem = this.remotes.get(i);
       if (rem) Object.assign(rem.n, decode(a));
+    }
+    for (const [id, inputType] of Object.entries(s.inputTypes || {})) {
+      const playerId = Number(id);
+      if (Number.isInteger(playerId) && playerId >= 0 && playerId < MAX_PLAYERS) {
+        this.setRemoteInputType(playerId, inputType);
+      }
     }
   }
 
@@ -430,6 +450,7 @@ export class Game {
     this.host = this.network.isHost;
     this.me = me;
     this.names = (names || []).map(n => n ?? null);
+    this.inputTypes = this.names.map(name => name === null ? null : 'keyboard');
     this.appearances = (appearances || []).map(appearance =>
       appearance ? normalizeAppearance(appearance) : null
     );
@@ -458,7 +479,11 @@ export class Game {
     this.deathEl.style.display = 'none';
 
     // Spawns initiaux déterministes : tous les clients calculent la même chose.
-    const spawnOf = id => this.world.spawns[this.ids.indexOf(id) % this.world.spawns.length];
+    const spawnOf = id => {
+      const index = this.ids.indexOf(id);
+      const spawnIndex = Math.floor(index * this.world.spawns.length / this.ids.length);
+      return this.world.spawns[spawnIndex];
+    };
 
     for (const id of [...this.remotes.keys()]) this.removeRemote(id);
     for (const id of this.ids) if (id !== this.me) this.addRemote(id, spawnOf(id));
@@ -1418,17 +1443,24 @@ export class Game {
         this.netAcc = 0;
         if (this.host) {
           const pos = {};
+          const inputTypes = {};
           for (const id of this.ids) {
             pos[id] = encode(id === this.me ? this.snap() : (this.remotes.get(id)?.n ?? { x: 0, z: 0 }));
+            inputTypes[id] = id === this.me
+              ? this.controller.inputType
+              : this.remotes.get(id)?.inputType || 'keyboard';
           }
           this.network.send(MSG.STATE, {
             state: {
-              hp: this.hp, score: this.score, dead: this.dead, time: this.clockValue, pos,
+              hp: this.hp, score: this.score, dead: this.dead, time: this.clockValue, pos, inputTypes,
               ...(this.isFlag() ? { cap: this.capture.map(v => Math.round(v * 10) / 10), zone: this.zone } : {})
             }
           });
         } else {
-          this.network.send(MSG.INPUT, { input: encode(this.snap()) });
+          this.network.send(MSG.INPUT, {
+            input: encode(this.snap()),
+            inputType: this.controller.inputType
+          });
         }
       }
 

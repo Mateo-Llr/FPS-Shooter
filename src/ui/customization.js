@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { APPEARANCE_OPTIONS, getAppearance, saveAppearance } from '../game/customization.js';
 import { createCharacter, disposeCharacter, poseIdle, showGun } from '../game/character.js';
+import { progress } from '../game/progress.js';
 
 export class CustomizationUI {
   constructor(container) {
@@ -9,6 +10,7 @@ export class CustomizationUI {
     this.render();
     this.initPreview();
     this.bind();
+    progress.onChange(() => this.renderAccessoryChoices());
   }
 
   render() {
@@ -47,7 +49,9 @@ export class CustomizationUI {
               <section class="custom-category" data-category="${category}">
                 <h3>${labels[category]}</h3>
                 <div class="custom-options-list">
-                  ${options.map(option => `
+                  ${(category === 'accessory'
+                    ? options.filter(option => option.id === 'none' || progress.ownsCosmetic(option.id))
+                    : options).map(option => `
                     <button class="custom-choice${this.appearance[category] === option.id ? ' selected' : ''}"
                       type="button" data-category="${category}" data-value="${option.id}"
                       aria-pressed="${this.appearance[category] === option.id}"
@@ -83,6 +87,28 @@ export class CustomizationUI {
         this.updatePreview();
       }
     });
+  }
+
+  renderAccessoryChoices() {
+    const list = this.container.querySelector('.custom-category[data-category="accessory"] .custom-options-list');
+    if (!list) return;
+    const options = APPEARANCE_OPTIONS.accessory.filter(option =>
+      option.id === 'none' || progress.ownsCosmetic(option.id)
+    );
+    list.replaceChildren(...options.map(option => {
+      const button = document.createElement('button');
+      const selected = this.appearance.accessory === option.id;
+      button.className = `custom-choice${selected ? ' selected' : ''}`;
+      button.type = 'button';
+      button.dataset.category = 'accessory';
+      button.dataset.value = option.id;
+      button.setAttribute('aria-pressed', String(selected));
+      button.title = option.label;
+      const label = document.createElement('span');
+      label.textContent = option.label;
+      button.appendChild(label);
+      return button;
+    }));
   }
 
   initPreview() {

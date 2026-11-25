@@ -1,4 +1,5 @@
 // Progression : crédits, statistiques, succès et quêtes quotidiennes (sauvegardés dans localStorage).
+import { COSMETIC_ITEMS } from './customization.js';
 
 const STORE_KEY = 'clash.progress.v1';
 
@@ -172,7 +173,7 @@ const blankStats = () => ({
   earned: 0, questsDone: 0, bonusDays: 0
 });
 const blank = () => ({
-  v: 1, coins: 0, stats: blankStats(), unlocked: {},
+  v: 1, coins: 0, stats: blankStats(), unlocked: {}, cosmetics: [],
   daily: { day: '', quests: [], bonus: false }
 });
 
@@ -203,6 +204,9 @@ class Progress {
       for (const [id, at] of Object.entries(j.unlocked || {})) {
         if (ACHIEVEMENTS.some(x => x.id === id)) d.unlocked[id] = num(at) || Date.now();
       }
+      if (Array.isArray(j.cosmetics)) {
+        d.cosmetics = [...new Set(j.cosmetics.filter(id => COSMETIC_ITEMS.some(item => item.id === id)))];
+      }
       if (typeof j.daily?.day === 'string' && Array.isArray(j.daily.quests)) {
         d.daily.day = j.daily.day;
         d.daily.bonus = !!j.daily.bonus;
@@ -226,6 +230,18 @@ class Progress {
 
   get coins() { return this.data.coins; }
   get stats() { return this.data.stats; }
+  ownsCosmetic(id) { return this.data.cosmetics.includes(id); }
+
+  purchaseCosmetic(id) {
+    const item = COSMETIC_ITEMS.find(cosmetic => cosmetic.id === id);
+    if (!item || this.ownsCosmetic(id)) return 'unavailable';
+    if (this.data.coins < item.price) return 'insufficient';
+    this.data.coins -= item.price;
+    this.data.cosmetics.push(id);
+    this.save();
+    this.notify();
+    return 'purchased';
+  }
 
   grant(amount) {
     this.data.coins += amount;
