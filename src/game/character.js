@@ -16,6 +16,58 @@ export const box = (parent, [w, h, d], mat, x, y, z) => {
   return m;
 };
 
+/** Couteau tactique : lame extrudée (pointe, dos droit, tranchant), gouttière, garde, manche strié, pommeau. */
+function buildKnife(G, { black, accent }) {
+  const steel = new THREE.MeshStandardMaterial({ color: 0xd3dade, metalness: 0.95, roughness: 0.16, side: THREE.DoubleSide });
+  const darkSteel = new THREE.MeshStandardMaterial({ color: 0x39424a, metalness: 0.9, roughness: 0.35 });
+  const K = new THREE.Group();
+
+  // Lame : profil dessiné à plat puis tourné (longueur → -Z, largeur → X, épaisseur → Y).
+  const L = 0.42, w = 0.04;
+  const shape = new THREE.Shape();
+  shape.moveTo(0, w);
+  shape.lineTo(L * 0.62, w);
+  shape.quadraticCurveTo(L * 0.9, w * 0.9, L, -0.004);
+  shape.quadraticCurveTo(L * 0.72, -w * 1.15, L * 0.3, -w);
+  shape.lineTo(0, -w);
+  shape.closePath();
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: 0.012, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.003, bevelSegments: 1, curveSegments: 8
+  });
+  geo.translate(0, 0, -0.006);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) pos.setXYZ(i, -pos.getY(i), pos.getZ(i), -pos.getX(i));
+  geo.computeVertexNormals();
+  const blade = new THREE.Mesh(geo, steel);
+  blade.position.z = -0.03;
+  K.add(blade);
+  box(K, [0.014, 0.0215, 0.2], darkSteel, -0.012, 0, -0.23); // gouttière
+
+  // Garde
+  box(K, [0.13, 0.03, 0.024], darkSteel, 0, 0, -0.02);
+  box(K, [0.02, 0.034, 0.03], accent, 0.065, 0, -0.02);
+  box(K, [0.02, 0.034, 0.03], accent, -0.065, 0, -0.02);
+
+  // Manche strié + pommeau
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.025, 0.22, 10), black);
+  handle.rotation.x = Math.PI / 2;
+  handle.position.z = 0.12;
+  K.add(handle);
+  for (let i = 0; i < 5; i++) {
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.0275, 0.0275, 0.012, 10), accent);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.z = 0.04 + i * 0.037;
+    K.add(ring);
+  }
+  const pommel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.026, 0.03, 10), darkSteel);
+  pommel.rotation.x = Math.PI / 2;
+  pommel.position.z = 0.245;
+  K.add(pommel);
+
+  K.rotation.z = -Math.PI / 2; // lame verticale, tranchant vers le bas
+  G.add(K);
+}
+
 export function gunModel(t) {
   const mat = (c, m, r) => new THREE.MeshStandardMaterial({ color: c, metalness: m, roughness: r });
   const metal = mat(0x202832, 0.75, 0.3), black = mat(0x10151c, 0.4, 0.55), accent = mat(0xd85b32, 0.25, 0.45),
@@ -36,10 +88,7 @@ export function gunModel(t) {
     box(G, [0.12, 0.25, 0.15], wood, 0, -0.18, 0.14);
     G.userData.muzzle = -1.05;
   } else if (t === 'knife') {
-    box(G, [0.07, 0.08, 0.3], black, 0, -0.02, 0.12);
-    box(G, [0.16, 0.055, 0.07], metal, 0, 0.02, -0.06);
-    box(G, [0.065, 0.07, 0.38], metal, 0, 0.035, -0.28);
-    box(G, [0.045, 0.035, 0.1], accent, 0, 0.035, -0.52);
+    buildKnife(G, { black, accent });
   } else if (t === 'sniper') {
     box(G, [0.18, 0.17, 0.8], metal, 0, 0, 0);
     cyl(0.032, 1.1, black, 0.03, -0.85);
@@ -441,18 +490,20 @@ export function createCharacter({ shirt = 0xc94f36, label = null, inputType = 'k
   // Le visage regarde vers -Z.
   // Le sommet du crâne est à y = 1.935.
 
-  const hairBox = (size, x, y, z, rotation = [0, 0, 0]) => {
+  // Repères du crâne (coordonnées de head-model, visage vers -Z) :
+  // cube de 0.43 centré en y = 1.72 -> demi-côté 0.215, sommet 1.935, base 1.505.
+  const SKULL_R = 0.215;
+  const SKULL_TOP = 1.935;
+
+  const hairBox = (name, size, x, y, z, rotation = [0, 0, 0]) => {
     const mesh = box(hairGroup, size, hair, x, y, z);
+    if (name) mesh.name = name;
     mesh.rotation.set(...rotation);
     return mesh;
   };
 
-  const hairBall = (x, y, z, sx, sy, sz) => {
-    const mesh = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(1, 1),
-      hair
-    );
-
+  const hairBall = (x, y, z, sx, sy = sx, sz = sx) => {
+    const mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), hair);
     mesh.name = `hair-volume-${hairGroup.children.length}`;
     mesh.position.set(x, y, z);
     mesh.scale.set(sx, sy, sz);
@@ -460,284 +511,191 @@ export function createCharacter({ shirt = 0xc94f36, label = null, inputType = 'k
     return mesh;
   };
 
-  // Volume supérieur : recouvre le crâne sans flotter.
-  const crown = (height = 0.12, width = 0.46, depth = 0.46) => {
-    return hairBox(
-      [width, height, depth],
-      0,
-      1.935 + height * 0.35,
-      0
-    );
-  };
+  /**
+   * Coque de cheveux : dessus + deux côtés + arrière (+ frange), tous de même épaisseur et
+   * qui se recouvrent aux angles, donc sans trou ni plaque flottante.
+   *  t          épaisseur des côtés / de l'arrière
+   *  topT       débord du dessus (>= t)
+   *  top        épaisseur du dessus
+   *  sideBottom / backBottom   hauteur où s'arrêtent les côtés / l'arrière
+   *  sideFront  z où commencent les pattes (plus petit = plus près du front)
+   *  fringe     hauteur de la frange (0 = aucune, max ~0.08 pour ne pas cacher les sourcils)
+   *  taper      ajoute une bande plus fine en bas (dégradé)
+   * Retourne la hauteur de la surface du dessus.
+   */
+  const shell = ({
+    t = 0.035, topT = t, top = 0.08, sideBottom = 1.80, backBottom = sideBottom,
+    sideFront = -0.12, fringe = 0, taper = false
+  } = {}) => {
+    const r = SKULL_R, sk = SKULL_TOP;
+    const outer = r + t;
+    const topBase = sk - 0.012;
+    hairBox('hair-top', [2 * (r + topT), top, 2 * (r + topT)], 0, topBase + top / 2, 0);
 
-  // Mèches latérales : suivent les contours de la tête.
-  const sideLocks = (height = 0.22, width = 0.075, bottomY = 1.69) => {
-    const centerY = bottomY + height / 2;
-
-    for (const side of [-1, 1]) {
-      hairBox(
-        [width, height, 0.34],
-        side * 0.19,
-        centerY,
-        0.015
-      );
+    const sideH = sk - sideBottom;
+    const sideDepth = outer - sideFront;
+    for (const [s, name] of [[-1, 'hair-side-l'], [1, 'hair-side-r']]) {
+      hairBox(name, [t + 0.01, sideH, sideDepth],
+        s * (r + t / 2 - 0.005), sideBottom + sideH / 2, (sideFront + outer) / 2);
     }
+
+    const backH = sk - backBottom;
+    hairBox('hair-back', [2 * outer, backH, t + 0.01], 0, backBottom + backH / 2, r + t / 2 - 0.005);
+
+    if (fringe > 0) {
+      hairBox('hair-fringe', [2 * (r + topT), fringe + 0.004, topT + 0.01],
+        0, sk + 0.004 - (fringe + 0.004) / 2, -(r + topT / 2 - 0.005));
+    }
+
+    if (taper) {
+      const o = r + 0.012;
+      hairBox('hair-nape', [2 * o, 0.08, 0.022], 0, backBottom - 0.04 + 0.004, r + 0.006);
+      for (const [s, name] of [[-1, 'hair-temple-l'], [1, 'hair-temple-r']]) {
+        hairBox(name, [0.022, 0.07, o - sideFront], s * (r + 0.006), sideBottom - 0.035 + 0.004, (sideFront + o) / 2);
+      }
+    }
+    return topBase + top;
   };
 
-  // Frange frontale, placée devant le front.
-  const fringe = (width = 0.39, height = 0.09) => {
-    hairBox(
-      [width, height, 0.075],
-      0,
-      1.875,
-      -0.205
-    );
-  };
-
-  // Volume arrière pour les coiffures longues.
-  const backHair = (height, width = 0.34) => {
-    hairBox(
-      [width, height, 0.105],
-      0,
-      1.91 - height / 2,
-      0.19
-    );
-  };
-
-  // Pointes verticales avec une base commune.
-  const spikes = (positions, height = 0.20, width = 0.075) => {
-    for (const [x, z, variation = 1] of positions) {
+  // Pointes : cônes qui partent de baseY et s'écartent du centre de la tête.
+  const spikes = (list, baseY, height = 0.2, width = 0.065, lean = 1.5) => {
+    for (const [x, z, variation = 1] of list) {
       const h = height * variation;
-
-      const spike = new THREE.Mesh(
-        new THREE.ConeGeometry(width, h, 5),
-        hair
-      );
-
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(width, h, 5), hair);
       spike.name = `hair-spike-${hairGroup.children.length}`;
-      spike.position.set(x, 1.93 + h / 2, z);
-
-      // Légère inclinaison, sans pointes désordonnées.
-      spike.rotation.z = -x * 0.35;
-      spike.rotation.x = z * 0.15;
-
+      spike.position.set(x, baseY + h / 2 - 0.01, z);
+      spike.rotation.set(z * lean, 0, -x * lean);
       hairGroup.add(spike);
     }
   };
 
-  // Boucles disposées sur la surface supérieure du crâne.
-  const curlyTop = () => {
-    const positions = [
-      [-0.15, -0.13],
-      [0, -0.16],
-      [0.15, -0.13],
-      [-0.19, 0.02],
-      [-0.06, 0.015],
-      [0.08, 0.015],
-      [0.19, 0.02],
-      [-0.14, 0.15],
-      [0, 0.17],
-      [0.14, 0.15]
-    ];
-
-    for (const [x, z] of positions) {
-      hairBall(x, 1.975, z, 0.075, 0.075, 0.075);
-    }
-  };
+  const ringPoints = (radius, count, offset = 0) => Array.from({ length: count }, (_, i) => {
+    const a = offset + (i / count) * Math.PI * 2;
+    return [Math.sin(a) * radius, Math.cos(a) * radius];
+  });
 
   switch (hairStyle) {
 
-    // Très courte : uniquement une couche supérieure.
+    // Très court : fine coque près du crâne.
     case 'buzz': {
-      crown(0.065, 0.44, 0.44);
-      sideLocks(0.12, 0.035, 1.75);
+      shell({ t: 0.015, top: 0.035, sideBottom: 1.84, backBottom: 1.80, sideFront: -0.08 });
       break;
     }
 
-    // Dégradé : dessus plus épais, côtés très courts.
+    // Dégradé : dessus plus épais, côtés et nuque qui s'affinent.
     case 'fade': {
-      crown(0.13, 0.46, 0.46);
-      sideLocks(0.13, 0.035, 1.75);
-      fringe(0.40, 0.075);
+      shell({ t: 0.02, topT: 0.035, top: 0.09, sideBottom: 1.86, backBottom: 1.84, sideFront: -0.06, fringe: 0.06, taper: true });
       break;
     }
 
-    // Afro : une seule masse volumique cohérente.
+    // Afro : grosse masse centrale, volume arrière et petites boucles sur le contour.
     case 'afro': {
-      hairBall(0, 2.005, 0, 0.265, 0.225, 0.265);
-
-      // Quelques petites irrégularités sur le contour,
-      // intégrées à la masse principale.
-      [
-        [-0.20, 1.99, 0],
-        [0.20, 1.99, 0],
-        [-0.13, 2.08, 0.10],
-        [0.13, 2.08, 0.10],
-        [0, 2.09, -0.13]
-      ].forEach(([x, y, z]) => {
-        hairBall(x, y, z, 0.075, 0.075, 0.075);
+      hairBall(0, 1.99, 0.035, 0.30, 0.26, 0.30);
+      hairBall(0, 1.86, 0.11, 0.27, 0.21, 0.25);
+      // Boucles sur les côtés et l'arrière seulement (rien sur le front, sinon elles ressemblent à des yeux).
+      ringPoints(0.27, 12, Math.PI / 12).filter(([, z]) => z > 0.02).forEach(([x, z], i) => {
+        hairBall(x, 1.95 + (i % 2) * 0.05, z + 0.035, 0.1);
       });
-
       break;
     }
 
-    // Cheveux bouclés : boucles localisées sur le dessus.
+    // Bouclés : coque fine recouverte de boucles réparties sur le dessus, les côtés et l'arrière.
     case 'curly': {
-      crown(0.055, 0.43, 0.43);
-      curlyTop();
-      sideLocks(0.17, 0.065, 1.75);
+      const topY = shell({ t: 0.02, top: 0.04, sideBottom: 1.82, backBottom: 1.78 });
+      for (const x of [-0.13, 0, 0.13]) {
+        for (const z of [-0.12, 0, 0.13]) hairBall(x, topY + 0.015, z, 0.085, 0.08, 0.085);
+      }
+      ringPoints(0.19, 10).filter(([, z]) => z > -0.12).forEach(([x, z]) => hairBall(x, topY - 0.005, z, 0.08));
+      ringPoints(0.225, 14).filter(([, z]) => z > -0.1).forEach(([x, z]) => hairBall(x, 1.885, z, 0.085));
+      ringPoints(0.225, 14).filter(([, z]) => z > 0.12).forEach(([x, z]) => hairBall(x, 1.775, z, 0.08));
       break;
     }
 
-    // Crête iroquoise : une ligne centrale de pointes.
+    // Crête : côtés rasés, bande centrale d'avant en arrière, pointes dessus.
     case 'mohawk': {
-      crown(0.065, 0.44, 0.43);
-      sideLocks(0.12, 0.035, 1.77);
-
-      hairBox([0.13, 0.12, 0.38], 0, 1.985, 0);
-
-      spikes([
-        [0, -0.16, 0.8],
-        [0, -0.08, 1],
-        [0, 0, 1.15],
-        [0, 0.08, 1],
-        [0, 0.16, 0.8]
-      ], 0.20, 0.065);
-
+      const topY = shell({ t: 0.015, top: 0.03, sideBottom: 1.83, backBottom: 1.78, sideFront: -0.06 });
+      hairBox('hair-ridge', [0.11, 0.09, 0.44], 0, topY - 0.01 + 0.045, 0);
+      spikes([-0.18, -0.12, -0.06, 0, 0.06, 0.12, 0.18].map((z, i) => [0, z, i % 2 ? 0.85 : 1.05]),
+        topY + 0.08, 0.17, 0.06, 1.6);
       break;
     }
 
-    // Cheveux longs : mèches jusqu'aux épaules.
+    // Longs : jusqu'aux épaules, côtés et arrière continus.
     case 'long': {
-      crown(0.14);
-      fringe(0.40, 0.09);
-      sideLocks(0.55, 0.085, 1.43);
-      backHair(0.52, 0.34);
+      shell({ t: 0.04, top: 0.075, sideBottom: 1.50, backBottom: 1.40, sideFront: -0.13, fringe: 0.075 });
       break;
     }
 
-    // Carré : volume latéral à hauteur de mâchoire.
+    // Carré : s'arrête à la mâchoire.
     case 'bob': {
-      crown(0.13);
-      fringe(0.40, 0.09);
-      sideLocks(0.34, 0.09, 1.62);
-      backHair(0.33, 0.36);
+      shell({ t: 0.04, top: 0.075, sideBottom: 1.60, backBottom: 1.58, sideFront: -0.13, fringe: 0.075 });
       break;
     }
 
-    // Queue de cheval : cheveux attachés derrière.
+    // Queue de cheval : coque + attache + queue qui s'effile vers l'arrière.
     case 'ponytail': {
-      crown(0.13);
-      fringe(0.40, 0.085);
-      sideLocks(0.22, 0.075, 1.69);
-
-      // Attache arrière.
-      hairBall(0, 1.82, 0.22, 0.075, 0.075, 0.075);
-
-      // Queue orientée vers l'arrière et vers le bas.
-      const tail = hairBox(
-        [0.13, 0.38, 0.13],
-        0.025,
-        1.60,
-        0.34,
-        [-0.22, 0, -0.08]
-      );
-
+      shell({ t: 0.035, top: 0.075, sideBottom: 1.80, backBottom: 1.74, fringe: 0.075 });
+      const angle = 0.2;                                    // la queue s'écarte de la tête vers le bas
+      const dir = new THREE.Vector3(0, -Math.cos(angle), Math.sin(angle));
+      const origin = new THREE.Vector3(0, 1.87, 0.275);
+      hairBall(origin.x, origin.y, origin.z, 0.075);
+      [[0.12, 0.1], [0.1, 0.085], [0.075, 0.07]].forEach(([w, d], i) => {
+        const length = 0.14;
+        const c = origin.clone().addScaledVector(dir, (i + 0.5) * length);
+        hairBox(`hair-tail-${i}`, [w, length + 0.01, d], c.x, c.y, c.z, [-angle, 0, 0]);
+      });
       break;
     }
 
-    // Chignon : volume attaché à l'arrière du crâne.
+    // Chignon : coque + gros volume sur l'arrière du crâne.
     case 'bun': {
-      crown(0.13);
-      fringe(0.40, 0.085);
-      sideLocks(0.20, 0.075, 1.70);
-
-      hairBall(0, 2.015, 0.245, 0.12, 0.12, 0.12);
+      const topY = shell({ t: 0.035, top: 0.075, sideBottom: 1.80, backBottom: 1.76, fringe: 0.075 });
+      hairBall(0, topY + 0.05, 0.14, 0.125);
       break;
     }
 
-    // Raie sur le côté.
+    // Raie sur le côté : deux masses qui retombent de part et d'autre de la raie.
     case 'sidepart': {
-      crown(0.14);
-      sideLocks(0.20, 0.075, 1.69);
-
-      // Mèche frontale orientée vers un côté.
-      hairBox(
-        [0.28, 0.09, 0.105],
-        -0.065,
-        1.88,
-        -0.205,
-        [0, 0, -0.12]
-      );
-
-      hairBox(
-        [0.15, 0.055, 0.12],
-        0.12,
-        1.96,
-        -0.11,
-        [0, 0, 0.12]
-      );
-
+      const topY = shell({ t: 0.035, top: 0.07, sideBottom: 1.80, backBottom: 1.78, fringe: 0.075 });
+      hairBox('hair-sweep', [0.27, 0.04, 0.4], -0.075, topY + 0.005, 0, [0, 0, 0.1]);
+      hairBox('hair-part', [0.15, 0.03, 0.4], 0.13, topY, 0, [0, 0, -0.1]);
       break;
     }
 
-    // Dessus long, côtés rasés.
+    // Undercut : côtés rasés, dessus long relevé vers l'avant.
     case 'undercut': {
-      crown(0.17, 0.45, 0.46);
-      sideLocks(0.13, 0.035, 1.75);
-      fringe(0.40, 0.09);
-
-      hairBox(
-        [0.22, 0.07, 0.14],
-        0.08,
-        2.025,
-        -0.12
-      );
-
+      const topY = shell({ t: 0.015, topT: 0.03, top: 0.1, sideBottom: 1.84, backBottom: 1.80, sideFront: -0.06, fringe: 0.07, taper: true });
+      hairBox('hair-lock', [0.3, 0.07, 0.36], 0, topY + 0.01, -0.02);
+      hairBox('hair-quiff', [0.28, 0.08, 0.12], 0, topY + 0.03, -0.19, [0.3, 0, 0]);
       break;
     }
 
-    // Cheveux hérissés.
+    // Hérissés : coque + pointes réparties sur tout le dessus, orientées vers l'extérieur.
     case 'spiky': {
-      crown(0.075, 0.44, 0.43);
-      sideLocks(0.16, 0.045, 1.72);
-
-      spikes([
-        [-0.15, -0.09, 0.8],
-        [-0.075, -0.12, 1],
-        [0, -0.13, 1.1],
-        [0.075, -0.12, 1],
-        [0.15, -0.09, 0.8],
-        [-0.09, 0.07, 0.8],
-        [0.09, 0.07, 0.8]
-      ], 0.23, 0.065);
-
+      const topY = shell({ t: 0.03, top: 0.06, sideBottom: 1.78, backBottom: 1.76 });
+      const list = [[0, 0, 1.15]];
+      ringPoints(0.1, 6).forEach(([x, z], i) => list.push([x, z, i % 2 ? 0.9 : 1.05]));
+      ringPoints(0.185, 10, Math.PI / 10).forEach(([x, z], i) => list.push([x, z, i % 2 ? 0.75 : 0.9]));
+      spikes(list, topY, 0.21, 0.065, 1.5);
       break;
     }
 
-    // Coupe classique.
+    // Classique : coque, frange et petite mèche qui retombe à gauche.
     case 'classic':
     default: {
-      crown(0.14);
-      fringe(0.40, 0.09);
-      sideLocks(0.20, 0.075, 1.69);
-
-      // Mèche supérieure décalée pour un aspect naturel.
-      hairBox(
-        [0.22, 0.065, 0.15],
-        -0.07,
-        2.005,
-        -0.08,
-        [0, 0, -0.08]
-      );
-
+      const topY = shell({ t: 0.035, top: 0.075, sideBottom: 1.80, backBottom: 1.78, fringe: 0.075 });
+      hairBox('hair-tuft', [0.24, 0.05, 0.22], -0.06, topY + 0.01, -0.09, [0, 0, 0.08]);
       break;
     }
   }
 
   // --- OREILLES ---
-  box(headModel, [0.09, 0.17, 0.15], skin, -0.255, 1.71, 0);
-  box(headModel, [0.09, 0.17, 0.15], skin, 0.255, 1.71, 0);
+  // Les cheveux longs et le carré recouvrent les oreilles : on ne les crée pas pour éviter
+  // qu'elles ne traversent la coiffure.
+  if (hairStyle !== 'long' && hairStyle !== 'bob') {
+    box(headModel, [0.09, 0.17, 0.15], skin, -0.255, 1.71, 0);
+    box(headModel, [0.09, 0.17, 0.15], skin, 0.255, 1.71, 0);
+  }
 
   // --- VISAGE ---
   const face = new THREE.Group();
@@ -816,18 +774,26 @@ export function createCharacter({ shirt = 0xc94f36, label = null, inputType = 'k
   const gripPositions = {
     shotgun: [0, -0.18, 0.14],
     rifle: [0, -0.19, 0.13],
-    sniper: [0, -0.18, 0.2],
-    knife: [0, -0.02, 0.12]
+    sniper: [0, -0.18, 0.2]
   };
+  // Le couteau se tient lame vers l'avant, sans l'inclinaison des armes à feu.
+  const KNIFE_POSE = { position: [0, -0.7, -0.15], rotationX: 0 };
   const armPose = 1.35;
   for (const t of ['shotgun', 'rifle', 'sniper', 'knife']) {
     const m = gunModel(t);
     m.scale.setScalar(0.7);
-    m.rotation.x = -armPose;
-    const grip = new THREE.Vector3(...gripPositions[t])
-      .multiplyScalar(0.7)
-      .applyAxisAngle(new THREE.Vector3(1, 0, 0), m.rotation.x);
-    m.position.set(-grip.x, -0.68 - grip.y, -grip.z);
+    if (t === 'knife') {
+      m.rotation.x = KNIFE_POSE.rotationX;
+      m.position.set(...KNIFE_POSE.position);
+    } else {
+      m.rotation.x = -armPose;
+      const grip = new THREE.Vector3(...gripPositions[t])
+        .multiplyScalar(0.7)
+        .applyAxisAngle(new THREE.Vector3(1, 0, 0), m.rotation.x);
+      m.position.set(-grip.x, -0.68 - grip.y, -grip.z);
+    }
+    m.name = `gun-${t}`;
+    m.userData.gunType = t;
     arms[1].add(m);
     guns[t] = m;
   }
@@ -854,19 +820,32 @@ export function createCharacter({ shirt = 0xc94f36, label = null, inputType = 'k
   const transforms = editorAssets.character.transforms || {};
   g.traverse(object => {
     if (object === g || object.userData.editorCustomId) return;
+    // L'identifiant contient la variante (hair:afro, accessory:cap, gun-rifle) : chaque coupe,
+    // accessoire et arme garde ses propres réglages.
     const parts = [];
     for (let node = object; node && node !== g; node = node.parent) {
-      parts.unshift(node.name || `part-${node.parent.children.indexOf(node)}`);
+      parts.unshift(
+        node === hairGroup ? `hair:${hairStyle}`
+          : node === accessory ? `accessory:${look?.accessory ?? 'none'}`
+            : node.name || `part-${node.parent.children.indexOf(node)}`
+      );
     }
     object.userData.editorId = parts.join('/');
+    const editableColor = object.material?.color && !object.material.userData.appearanceCategory;
+    // Valeurs du code, avant réglages enregistrés : l'éditeur s'en sert pour « Réinitialiser »
+    // et pour n'enregistrer que ce qui a vraiment été modifié.
+    object.userData.editorDefault = {
+      p: object.position.clone(),
+      r: object.rotation.clone(),
+      s: object.scale.clone(),
+      c: object.isMesh && editableColor ? object.material.color.getHex() : null
+    };
     const saved = transforms[object.userData.editorId];
     if (!saved) return;
     if (saved.position) object.position.fromArray(saved.position);
     if (saved.rotation) object.rotation.fromArray([...saved.rotation, 'XYZ']);
     if (saved.scale) object.scale.fromArray(saved.scale);
-    if (saved.color && object.material?.color && !object.material.userData.appearanceCategory) {
-      object.material.color.set(saved.color);
-    }
+    if (saved.color && editableColor) object.material.color.set(saved.color);
   });
 
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });

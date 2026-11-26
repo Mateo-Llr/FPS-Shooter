@@ -33,9 +33,9 @@ export const WEAPONS = {
   knife: {
     label: 'COUTEAU',
     melee: true,
-    cooldown: 600,
+    cooldown: 450,
     damage: 50,
-    range: 2.4
+    range: 2.8
   }
 };
 

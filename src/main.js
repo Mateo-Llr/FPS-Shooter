@@ -81,6 +81,31 @@ function bootstrap() {
   const lobbyFriends = document.querySelector('#friends-lobby');
   if (lobbyFriends) friends.mount(lobbyFriends, { lobby: true });
 
+  // Menu Jouer : amis connectés + salons à rejoindre en un clic.
+  const playFriends = document.querySelector('#friends-play');
+  const playPanel = document.querySelector('#play-friends');
+  if (playFriends && playPanel) {
+    friends.mount(playFriends, { compact: true });
+    const count = document.querySelector('#pf-count');
+    const refreshPlayFriends = () => {
+      const online = [...playFriends.querySelectorAll('.fr-row')]
+        .filter(row => row.querySelector('.fr-dot.on, .fr-dot.busy'));
+      const joinable = online.filter(row => row.querySelector('.join:not(:disabled)')).length;
+      count.textContent = joinable
+        ? `${joinable} SALON${joinable > 1 ? 'S' : ''} OUVERT${joinable > 1 ? 'S' : ''} · ${online.length} EN LIGNE`
+        : `${online.length} EN LIGNE`;
+      playPanel.classList.toggle('empty', online.length === 0);
+      playPanel.classList.toggle('live', joinable > 0);
+    };
+    new MutationObserver(refreshPlayFriends).observe(playFriends, {
+      childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'disabled']
+    });
+    refreshPlayFriends();
+  }
+  document.querySelectorAll('[data-goto]').forEach(button => {
+    button.onclick = () => menuTabs.find(tab => tab.dataset.tab === button.dataset.goto)?.click();
+  });
+
   settingsUI.mountInline(document.querySelector('#menu-settings-panel'));
   document.querySelector('#open-settings-lobby').onclick = () => settingsUI.open();
   game.onOpenSettings = () => settingsUI.open();

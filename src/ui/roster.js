@@ -229,6 +229,44 @@ const CSS = `
   letter-spacing: .14em;
 }
 
+/* Bots : badge, case de niveau (comme la croix d'expulsion) et sélecteur 1-10 */
+.rail-footer #add-bot { width: 100%; }
+.player-badge.bot { background: #3a4b55; color: #e6ecef; }
+.player-action.bot-level {
+  color: #ffd27a;
+  font: 800 14px 'Barlow Condensed', Arial, sans-serif;
+  letter-spacing: 0;
+}
+.player-action.bot-level:disabled { opacity: 1; cursor: default; }
+.bot-level-pop {
+  position: fixed;
+  z-index: 300;
+  display: grid;
+  grid-template-columns: repeat(5, 30px);
+  gap: 4px;
+  padding: 8px;
+  background: rgba(15, 22, 27, .96);
+  border: 1px solid #39464e;
+  box-shadow: 0 14px 40px rgba(0,0,0,.6);
+}
+.bot-level-pop button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-color: #42515a;
+  background: #11191f;
+  color: #dce4e7;
+  font: 800 14px 'Barlow Condensed', Arial, sans-serif;
+}
+.bot-level-pop button.active { background: #f07845; border-color: #f07845; color: #10151a; }
+.bot-level-pop .hint {
+  grid-column: 1 / -1;
+  color: #8a98a0;
+  font: 700 9px Inter, Arial, sans-serif;
+  letter-spacing: .14em;
+  text-align: center;
+}
+
 /* Étiquettes 3D au-dessus des têtes */
 #roster .r3d-tag {
   position: absolute;
@@ -454,16 +492,19 @@ export class Roster {
   }
 
   /** players : [{ id, name, host, me }] ou null (salon quitté). isHost contrôle le rail droit. */
-  set(players, isHost = false, onKick = null) {
+  set(players, isHost = false, onKick = null, botOpts = null) {
+    this.closeLevelPicker();
     if (!Array.isArray(players)) {
       this.list = [];
       this.isHost = false;
       this.onKick = null;
+      this.botOpts = null;
       this.right?.classList.add('hidden');
     } else {
       this.list = players.filter(Boolean).slice(0, 16);
       this.isHost = isHost;
       this.onKick = onKick;
+      this.botOpts = botOpts; // { onBotLevel(id, niveau), minLevel, maxLevel }
       this.right?.classList.toggle('hidden', !isHost);
     }
     this.sync();
@@ -515,7 +556,7 @@ export class Roster {
       details.className = 'player-details';
       const name = document.createElement('span');
       name.className = 'player-name';
-      name.textContent = player.name || 'Joueur';
+      name.textContent = (player.bot ? (player.name || '').replace(/ \(BOT\)$/, '') : player.name) || 'Joueur';
       details.appendChild(name);
 
       const badges = document.createElement('span');
@@ -525,6 +566,12 @@ export class Roster {
         host.className = 'player-badge host';
         host.textContent = 'HÔTE';
         badges.appendChild(host);
+      }
+      if (player.bot) {
+        const bot = document.createElement('span');
+        bot.className = 'player-badge bot';
+        bot.textContent = 'BOT';
+        badges.appendChild(bot);
       }
       if (player.me) {
         const me = document.createElement('span');
@@ -553,6 +600,18 @@ export class Roster {
         actions.appendChild(pending);
       }
 
+      if (player.bot) {
+        const lvl = document.createElement('button');
+        lvl.type = 'button';
+        lvl.className = 'player-action bot-level';
+        lvl.textContent = String(player.level ?? 3);
+        lvl.title = `Niveau du bot : ${player.level ?? 3} / ${this.botOpts?.maxLevel ?? 10}`;
+        lvl.setAttribute('aria-label', `Niveau de ${player.name || 'ce bot'} : ${player.level ?? 3}`);
+        if (this.isHost && this.botOpts?.onBotLevel) lvl.onclick = () => this.openLevelPicker(lvl, player);
+        else lvl.disabled = true;
+        actions.appendChild(lvl);
+      }
+
       if (this.isHost && !player.me) {
         const kick = document.createElement('button');
         kick.type = 'button';
@@ -566,6 +625,49 @@ export class Roster {
       row.appendChild(actions);
       this.playerList.appendChild(row);
     }
+  }
+
+  /** Petit sélecteur 1-10 ancré à la case de niveau d'un bot. */
+  openLevelPicker(anchor, player) {
+    this.closeLevelPicker();
+    const { minLevel = 1, maxLevel = 10, onBotLevel } = this.botOpts || {};
+    const pop = document.createElement('div');
+    pop.className = 'bot-level-pop';
+    for (let n = minLevel; n <= maxLevel; n++) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = String(n);
+      if (n === player.level) b.classList.add('active');
+      b.onclick = () => { this.closeLevelPicker(); onBotLevel?.(player.id, n); };
+      pop.appendChild(b);
+    }
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = '1 FACILE · 5 MOYEN · 10 EXPERT';
+    pop.appendChild(hint);
+    document.body.appendChild(pop);
+
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = `${Math.min(innerWidth - pop.offsetWidth - 8, r.right + 10)}px`;
+    pop.style.top = `${clamp(r.top - 6, 8, innerHeight - pop.offsetHeight - 8)}px`;
+
+    this._pickerClose = e => {
+      if (e.type === 'keydown' ? e.key === 'Escape' : !pop.contains(e.target)) this.closeLevelPicker();
+    };
+    this._pickerEl = pop;
+    setTimeout(() => {
+      if (this._pickerEl !== pop) return;
+      document.addEventListener('pointerdown', this._pickerClose, true);
+      document.addEventListener('keydown', this._pickerClose, true);
+    });
+  }
+
+  closeLevelPicker() {
+    if (!this._pickerEl) return;
+    document.removeEventListener('pointerdown', this._pickerClose, true);
+    document.removeEventListener('keydown', this._pickerClose, true);
+    this._pickerEl.remove();
+    this._pickerEl = null;
   }
 
   addEntry(key, p, index) {
@@ -600,13 +702,13 @@ export class Roster {
   }
 
   updateTag(e, p) {
-    const sig = `${p.name}|${!!p.host}|${!!p.me}`;
+    const sig = `${p.name}|${!!p.host}|${!!p.me}|${!!p.bot}|${p.level ?? ''}`;
     if (sig === e.sig) return;
     e.sig = sig;
     e.tag.className = 'r3d-tag' + (p.me ? ' me' : '');
     e.tag.replaceChildren();
     const name = document.createElement('span');
-    name.textContent = p.name || 'Joueur';
+    name.textContent = (p.bot ? (p.name || '').replace(/ \(BOT\)$/, '') : p.name) || 'Joueur';
     e.tag.appendChild(name);
     const badge = (txt, cls) => {
       const b = document.createElement('span');
@@ -615,6 +717,7 @@ export class Roster {
       e.tag.appendChild(b);
     };
     if (p.host) badge('HÔTE');
+    if (p.bot)  badge(`BOT ${p.level ?? 3}`, 'you');
     if (p.me)   badge('TOI', 'you');
     e.ring.visible = !!p.me;
   }

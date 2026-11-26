@@ -1416,3 +1416,106 @@ input[type=range] {
   #menu-settings-panel .keys-grid { grid-template-columns:1fr; }
   #menu-settings-panel .key-btn { min-width:120px; }
 }
+
+/* ===================== Menu 01 · JOUER (refonte) ===================== */
+.menu-view.active[data-view="play"] {
+  grid-template-columns: minmax(260px, 1.05fr) minmax(340px, 450px);
+  align-items: center;
+  gap: clamp(28px, 6vw, 96px);
+  padding: 22px 0;
+}
+
+.play-copy .play-intro { margin: 22px 0 28px; }
+.play-stats { max-width: 340px; gap: 0; }
+.play-stats span {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 0;
+  color: #8f9ea6;
+  font-size: 10px;
+  letter-spacing: .16em;
+  border-bottom: 1px solid rgba(173, 190, 200, .1);
+}
+.play-stats span:first-child { border-top: 1px solid rgba(173, 190, 200, .1); }
+.play-stats b {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  border: 1px solid rgba(240, 120, 69, .5);
+  color: var(--orange-light);
+  font: 800 12px 'Barlow Condensed', sans-serif;
+  letter-spacing: .06em;
+}
+
+.play-side { display: grid; gap: 14px; width: 100%; min-width: 0; z-index: 1; }
+
+.play-side .menu-card {
+  position: relative;
+  padding: 24px;
+  border-top: 2px solid var(--orange);
+  background: linear-gradient(160deg, rgba(27, 38, 46, .94), rgba(12, 18, 23, .96));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .45);
+}
+.play-side .menu-card::before, .play-side .menu-card::after {
+  content: '';
+  position: absolute;
+  bottom: 8px;
+  width: 14px;
+  height: 14px;
+  border: 0 solid rgba(240, 120, 69, .55);
+  pointer-events: none;
+}
+.play-side .menu-card::before { left: 8px; border-left-width: 1px; border-bottom-width: 1px; }
+.play-side .menu-card::after { right: 8px; border-right-width: 1px; border-bottom-width: 1px; }
+
+.play-side .menu-card .primary.big {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  letter-spacing: .18em;
+  box-shadow: 0 10px 30px rgba(240, 120, 69, .22);
+  transition: box-shadow .2s, transform .2s;
+}
+.play-side .menu-card .primary.big::after { content: '→'; font-size: 20px; transition: transform .2s; }
+.play-side .menu-card .primary.big:hover { box-shadow: 0 12px 38px rgba(240, 120, 69, .38); }
+.play-side .menu-card .primary.big:hover::after { transform: translateX(6px); }
+
+/* Amis connectés */
+.play-friends {
+  padding: 14px 16px 12px;
+  border: 1px solid var(--border);
+  background: rgba(14, 21, 27, .85);
+  transition: border-color .3s, box-shadow .3s;
+}
+.play-friends.live {
+  border-color: rgba(240, 120, 69, .7);
+  box-shadow: 0 0 0 1px rgba(240, 120, 69, .18), 0 0 34px rgba(240, 120, 69, .14);
+}
+.pf-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.pf-pulse { width: 8px; height: 8px; border-radius: 50%; background: #4a5a64; flex: none; }
+.play-friends:not(.empty) .pf-pulse { background: #7fe08a; box-shadow: 0 0 10px #7fe08a; animation: pf-blink 1.6s ease-in-out infinite; }
+@keyframes pf-blink { 50% { opacity: .35; } }
+.pf-count { margin-left: auto; font: 800 12px 'Barlow Condensed', sans-serif; letter-spacing: .14em; color: #9caab2; }
+.play-friends.live .pf-count { color: var(--orange-light); }
+.pf-empty { display: none; margin: 0; font-size: 12px; line-height: 1.7; color: #77858b; }
+.pf-empty button { margin-left: 6px; padding: 5px 9px; font-size: 9px; }
+.play-friends.empty .pf-empty { display: block; }
+.play-friends.empty #friends-play { display: none; }
+
+/* On réutilise le composant Amis, mais en ne gardant que les amis connectés */
+#friends-play.friends { padding: 0; background: none; border: 0; box-shadow: none; backdrop-filter: none; max-height: none; }
+#friends-play .fr-head, #friends-play .fr-me, #friends-play .fr-add,
+#friends-play .fr-note, #friends-play .fr-empty { display: none !important; }
+#friends-play .fr-row:not(:has(.fr-dot.on)):not(:has(.fr-dot.busy)) { display: none; }
+#friends-play .fr-list { max-height: 208px; }
+
+@media (max-width: 1000px) {
+  .menu-view.active[data-view="play"] { grid-template-columns: minmax(210px, 1fr) minmax(300px, 410px); }
+}
+@media (max-width: 760px) {
+  .menu-view.active[data-view="play"] { grid-template-columns: 1fr; gap: 20px; padding: 18px 0; }
+  .play-side { max-width: 480px; margin: 0 auto; }
+}

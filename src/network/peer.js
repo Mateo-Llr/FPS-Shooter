@@ -16,6 +16,7 @@ export class Network {
     this.peer = null; this.conn = null; this.conns = new Map();
     this.isHost = false; this.roomCode = ''; this.connected = false;
     this.locked = false; this.handlers = {};
+    this.reserved = new Set(); // ids réservés par l'hôte pour des bots (jamais attribués à un invité)
   }
   on(event, callback) { (this.handlers[event] ||= []).push(callback); }
   emit(event, data) {
@@ -39,12 +40,12 @@ export class Network {
   }
 
   acceptGuest(conn) {
-    if (this.locked || this.conns.size >= MAX_PLAYERS - 1) {
+    if (this.locked || this.conns.size + this.reserved.size >= MAX_PLAYERS - 1) {
       conn.on('open', () => { conn.send(packet(MSG.HELLO, { refused: true })); setTimeout(() => conn.close(), 300); });
       return;
     }
     let id = 1;
-    while (this.conns.has(id)) id++;
+    while (this.conns.has(id) || this.reserved.has(id)) id++;
     this.conns.set(id, conn);
     conn.on('open', () => { this.connected = true; this.emit('peer-joined', { id }); });
     conn.on('data', data => { if (validMessage(data)) this.emit(data.type, { ...data, from: id }); });
@@ -103,7 +104,7 @@ export class Network {
   }
   destroyPeer() {
     try { this.conn?.close(); this.conns.forEach(c => c.close()); this.peer?.destroy(); } catch {}
-    this.conn = null; this.peer = null; this.conns.clear(); this.connected = false;
+    this.conn = null; this.peer = null; this.conns.clear(); this.reserved.clear(); this.connected = false;
   }
   destroy() { this.destroyPeer(); }
 }

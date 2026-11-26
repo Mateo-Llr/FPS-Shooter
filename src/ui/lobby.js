@@ -1,6 +1,7 @@
 import { MSG, MAX_PLAYERS } from '../network/protocol.js';
-import { getAppearance, normalizeAppearance } from '../game/customization.js';
+import { APPEARANCE_OPTIONS, getAppearance, normalizeAppearance } from '../game/customization.js';
 import { DEFAULT_MAP_ID, getMap, MAPS } from '../game/world.js';
+import { BOT_LEVEL_DEFAULT, BOT_LEVEL_MAX, BOT_LEVEL_MIN, BOT_NAMES, clampBotLevel } from '../game/bots.js';
 
 const $ = s => document.querySelector(s);
 const NICKNAME_KEY = 'clash.nickname';
@@ -20,6 +21,13 @@ const storeNickname = nickname => {
     // Le pseudo reste utilisable même si le stockage est indisponible.
   }
 };
+
+/** Apparence aléatoire pour un bot (une option au hasard par catégorie). */
+const randomAppearance = () => normalizeAppearance(Object.fromEntries(
+  Object.entries(APPEARANCE_OPTIONS)
+    .filter(([, options]) => Array.isArray(options) && options.length)
+    .map(([category, options]) => [category, options[Math.floor(Math.random() * options.length)].id])
+));
 
 /** Salon : 2 à 16 joueurs. L'hôte (id 0) tient la liste et la diffuse. */
 export class Lobby {
@@ -77,6 +85,7 @@ export class Lobby {
       this.syncMap();
       this.publish();
     };
+    this.mountBotControls();
     $('#start-game').onclick = () => this.startGame();
     this.syncMap();
     this.syncSettings();
@@ -143,6 +152,7 @@ export class Lobby {
     this.inRoom = lobby;
     this.friends?.push();
     $('#host-settings').classList.toggle('hidden', !this.network.isHost);
+    this.syncBotButton();
   }
 
   async create() {
@@ -221,35 +231,110 @@ export class Lobby {
     this.friends?.push();
     window.clashRoster?.set(
       this.players.map(p => ({
-        id: p.id, name: p.name, host: p.id === 0, me: p.id === this.me,
+        id: p.id, name: p.name, host: p.id === 0, me: p.id === this.me, bot: !!p.bot,
+        level: p.bot ? clampBotLevel(p.level) : null,
         appearance: p.appearance,
         friendCode: p.friendCode,
         friend: !!p.friendCode && !!this.friends?.isFriend(p.friendCode),
         pending: !!p.friendCode && !!this.friends?.pending.includes(p.friendCode)
       })),
       this.network.isHost,
-      id => this.kickPlayer(id)
+      id => this.kickPlayer(id),
+      // Bots : le roster affiche une case « niveau » (min–max) par bot ; l'hôte la modifie via onBotLevel(id, niveau).
+      { onBotLevel: (id, level) => this.setBotLevel(id, level), minLevel: BOT_LEVEL_MIN, maxLevel: BOT_LEVEL_MAX }
     );
     const start = $('#start-game');
     start.disabled = n < 2;
+    this.syncBotButton();
     this.status(this.network.isHost
       ? (n < 2 ? 'Partage ce code avec tes amis (jusqu’à 16 joueurs).' : `${n} joueurs connectés. Lance la partie quand tout le monde est là.`)
       : `${n} joueur${n > 1 ? 's' : ''} dans le salon. L’hôte va lancer la partie…`);
+  }
+
+  // ---------------------------------------------------------------- bots
+  // Un bot est un joueur du salon comme les autres (même liste, mêmes expulsions) : `bot: true`, pas de connexion réseau.
+
+  /** Bouton « Ajouter un bot », dans la colonne de gauche juste avant « Paramètres ». */
+  mountBotControls() {
+    if ($('#add-bot')) return;
+    const anchor = $('#open-settings-lobby');
+    if (!anchor) return;
+    const button = document.createElement('button');
+    button.id = 'add-bot';
+    button.type = 'button';
+    button.className = anchor.className; // même style que le bouton Paramètres
+    button.textContent = '+ AJOUTER UN BOT';
+    button.onclick = () => this.addBot();
+    anchor.before(button);
+    this.syncBotButton();
+  }
+
+  /** Visible pour l'hôte seulement ; grisé quand le salon est plein. */
+  syncBotButton() {
+    const button = $('#add-bot');
+    if (!button) return;
+    button.classList.toggle('hidden', !this.network.isHost);
+    button.disabled = this.players.length >= MAX_PLAYERS;
+  }
+
+  /** Niveau d'un bot (1 à 10), modifiable par l'hôte avant le lancement. */
+  setBotLevel(id, level) {
+    const bot = this.players.find(p => p.id === id && p.bot);
+    if (!this.network.isHost || this.started || !bot) return;
+    bot.level = clampBotLevel(level);
+    this.publish();
+  }
+
+  addBot() {
+    const n = this.network;
+    if (!n.isHost || this.started || this.postGame || this.players.length >= MAX_PLAYERS) return;
+    // Ids pris par le haut (15, 14…) : les invités reçoivent les plus petits ids libres.
+    const taken = new Set([0, ...this.players.map(p => p.id), ...n.conns.keys(), ...n.reserved]);
+    let id = MAX_PLAYERS - 1;
+    while (id > 0 && taken.has(id)) id--;
+    if (id <= 0) return;
+    const used = new Set(this.players.map(p => p.name));
+    const base = BOT_NAMES.map(name => `${name} (BOT)`).filter(name => !used.has(name));
+    const pool = base.length ? base : [`Bot ${id} (BOT)`];
+    n.reserved.add(id);
+    this.players.push({
+      id,
+      name: pool[Math.floor(Math.random() * pool.length)],
+      appearance: randomAppearance(),
+      friendCode: null,
+      bot: true,
+      level: BOT_LEVEL_DEFAULT
+    });
+    this.publish();
+  }
+
+  removeBot(id) {
+    this.network.reserved.delete(id);
+    this.players = this.players.filter(p => p.id !== id);
+    this.publish();
   }
 
   kickPlayer(id) {
     if (!this.network.isHost || this.started || id === this.me ||
       !this.players.some(player => player.id === id)) return;
     const player = this.players.find(p => p.id === id);
+    if (player.bot) { this.removeBot(id); return; }
     if (confirm(`Expulser ${player.name} du salon ?`)) this.network.kick(id);
   }
 
   syncSettings() {
-    const flag = $('#game-mode').value === 'flag';
-    const time = !flag && $('#win-mode').value === 'time';
-    $('#win-mode-wrap').classList.toggle('hidden', flag);
-    $('#target-wrap').classList.toggle('hidden', flag || time);
-    $('#duration-wrap').classList.toggle('hidden', flag || !time);
+    const mode = $('#game-mode').value;
+    const classic = mode === 'deathmatch';
+    const time = classic && $('#win-mode').value === 'time';
+    $('#win-mode-wrap').classList.toggle('hidden', !classic);
+    $('#target-wrap').classList.toggle('hidden', !classic || time);
+    $('#duration-wrap').classList.toggle('hidden', !classic || !time);
+    $('#flag-time-wrap').classList.toggle('hidden', mode !== 'flag');
+    $('#flag-size-wrap').classList.toggle('hidden', mode !== 'flag');
+    $('#bomb-time-wrap').classList.toggle('hidden', mode !== 'bomb');
+    $('#crown-time-wrap').classList.toggle('hidden', mode !== 'crown');
+    // Mode bombe : couteau uniquement, le choix d'arsenal n'a pas de sens.
+    $('#weapon-rule-wrap').classList.toggle('hidden', mode === 'bomb');
   }
 
   startGame() {
@@ -260,6 +345,10 @@ export class Lobby {
       target: +$('#target-kills').value,
       duration: +$('#duration').value,
       weapon: $('#weapon-rule').value,
+      flagSeconds: +$('#flag-time').value,
+      flagRadius: +$('#flag-size').value,
+      bombSeconds: +$('#bomb-time').value,
+      crownSeconds: +$('#crown-time').value,
       map: this.selectedMap
     };
     this.launchGame(config, this.players);
@@ -276,7 +365,8 @@ export class Lobby {
       appearances[i] ??= null;
     }
     this.network.locked = true;
-    for (const p of players) if (p.id !== 0) {
+    config = { ...config, bots: players.filter(p => p.bot).map(p => ({ id: p.id, level: clampBotLevel(p.level) })) };
+    for (const p of players) if (p.id !== 0 && !p.bot) {
       this.network.sendTo(p.id, MSG.START, { config, names, appearances, you: p.id });
     }
     this.begin(config, 0, names, appearances);
@@ -343,7 +433,7 @@ export class Lobby {
   confirmReplay() {
     if (!this.network.isHost || !this.postGame || !this.replayVotes.has(0)) return;
     const players = this.players.filter(p =>
-      this.replayVotes.has(p.id) && (p.id === 0 || this.network.conns.get(p.id)?.open)
+      p.bot || (this.replayVotes.has(p.id) && (p.id === 0 || this.network.conns.get(p.id)?.open))
     );
     if (players.length < 2) return;
     this.players = players;

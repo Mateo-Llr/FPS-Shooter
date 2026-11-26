@@ -40,6 +40,7 @@ export class PlayerController {
     this.gamepad = new GamepadState();
     this.gamepadJumpHeld = false;
     this.camHeight = 1.68;
+    this.speedMultiplier = 1; // ex. porteur de la bombe
     this.bind();
   }
 
@@ -157,7 +158,7 @@ export class PlayerController {
       shotgun: [850, 60],
       rifle: [150, 25],
       sniper: [1100, 80],
-      knife: [600, 50],
+      knife: [450, 50],
     }[this.weapon];
 
     if (!stats) return;
@@ -230,11 +231,11 @@ export class PlayerController {
     this.sprinting = !!this.keys[bind.sprint] ||
       !!pad?.buttons[GAMEPAD_BUTTONS.L3]?.pressed;
 
-    const speed = this.crouched
+    const speed = (this.crouched
       ? 3
       : this.sprinting
         ? 8
-        : 5.2;
+        : 5.2) * this.speedMultiplier;
 
     /*
      * Commandes : configurables dans Paramètres > Contrôles
