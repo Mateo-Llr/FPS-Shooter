@@ -63,6 +63,7 @@ Le script crée un commit et le pousse vers `origin/main`, ce qui déclenche le 
 - Prototype de base : les déplacements sont envoyés par le client et l'hôte tranche les tirs, mais ce n'est pas encore une simulation autoritaire complète et anti-triche.
 - Le modèle de dégâts, la validation de ligne de vue et la synchronisation sont volontairement simplifiés ; une vraie version compétitive nécessitera une simulation serveur/hôte à tick fixe.
 - PeerJS Cloud est un service public tiers : disponibilité non garantie. Certains NAT/pare-feu peuvent empêcher le P2P direct (TURN peut être nécessaire ; un relais TURN gratuit n'est pas garanti).
+- Le code ami et la liste d'amis sont enregistrés dans le stockage local du navigateur, sans compte ni synchronisation. Sur un nouvel ordinateur, il faut partager le nouveau code ami et ajouter les amis à nouveau. Les codes de salon sont temporaires et ne fonctionnent que tant que l'hôte est connecté.
 - La reconnexion automatique au même salon après fermeture de la connexion n'est pas encore implémentée ; le délai de forfait côté hôte est présent.
 - La collision est simplifiée, et les couvertures sont des volumes géométriques.
 - Les sons sont reportés en V2.

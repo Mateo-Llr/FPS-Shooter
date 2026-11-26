@@ -536,6 +536,13 @@ input:focus, select:focus {
 
 .fr-me button, .fr-add button { padding: 8px 12px; font-size: 10px; }
 
+.fr-storage-note {
+  margin: -4px 0 12px;
+  color: #8a98a0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .fr-add {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -1508,7 +1515,7 @@ input[type=range] {
 /* On réutilise le composant Amis, mais en ne gardant que les amis connectés */
 #friends-play.friends { padding: 0; background: none; border: 0; box-shadow: none; backdrop-filter: none; max-height: none; }
 #friends-play .fr-head, #friends-play .fr-me, #friends-play .fr-add,
-#friends-play .fr-note, #friends-play .fr-empty { display: none !important; }
+#friends-play .fr-note, #friends-play .fr-storage-note, #friends-play .fr-empty { display: none !important; }
 #friends-play .fr-row:not(:has(.fr-dot.on)):not(:has(.fr-dot.busy)) { display: none; }
 #friends-play .fr-list { max-height: 208px; }
 

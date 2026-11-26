@@ -284,6 +284,7 @@ export class Friends {
     container.innerHTML = `
       <div class="fr-head"><h2>AMIS</h2><span class="fr-count"></span></div>
       <div class="fr-me"><small>TON CODE AMI</small><b>${this.code}</b><button class="quiet" data-copy>COPIER</button></div>
+      <p class="fr-storage-note">Ton code et ta liste d’amis sont enregistrés sur cet appareil. Sur un nouvel ordinateur, partage ton nouveau code et ajoute tes amis à nouveau. Les codes de salon sont temporaires : l’hôte doit être en ligne.</p>
       <div class="fr-add"><input maxlength="8" placeholder="CODE D’UN AMI" autocomplete="off" spellcheck="false" /><button data-add>AJOUTER</button></div>
       <p class="fr-note"></p>
       <div class="fr-list"></div>`;
