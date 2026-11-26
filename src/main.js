@@ -1,5 +1,4 @@
 import './style.css';
-import './progress.css';
 import { Lobby } from './ui/lobby.js';
 import { Network } from './network/peer.js';
 import { Game } from './game/game.js';

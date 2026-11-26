@@ -81,28 +81,38 @@ export function keyLabel(code) {
   return code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'PAVÉ ').toUpperCase();
 }
 
+const ico = name => `<svg class="ic"><use href="#i-${name}"/></svg>`;
+
 const settingsSections = () => `
   <div class="settings-controls">
-    <section>
-      <h3>SOURIS</h3>
+    <section class="set-card set-mouse">
+      <h3>${ico('mouse-pointer-2')}<span>Souris</span></h3>
       <div class="set-row">
         <span>Sensibilité</span>
-        <input type="range" class="set-sens" min="0.1" max="3" step="0.05" />
+        <input type="range" class="set-sens" min="0.1" max="3" step="0.05" aria-label="Sensibilité de la souris" />
         <output class="set-sens-out"></output>
       </div>
     </section>
 
-    <section>
-      <h3>AUDIO</h3>
+    <section class="set-card set-audio">
+      <h3>${ico('volume-2')}<span>Audio</span></h3>
       <div class="set-row">
-        <span>Volume général</span>
-        <input type="range" class="set-vol" min="0" max="100" step="1" />
+        <span>Volume</span>
+        <input type="range" class="set-vol" min="0" max="100" step="1" aria-label="Volume général" />
         <output class="set-vol-out"></output>
       </div>
     </section>
 
-    <section>
-      <h3>MANETTE</h3>
+    <section class="set-card set-keys-card">
+      <h3>
+        ${ico('keyboard')}<span>Clavier</span>
+        <button class="set-reset" type="button" title="Réinitialiser les touches" aria-label="Réinitialiser les touches">${ico('rotate-ccw')}</button>
+      </h3>
+      <div class="set-keys keys-grid"></div>
+    </section>
+
+    <section class="set-card set-pad">
+      <h3>${ico('gamepad-2')}<span>Manette</span></h3>
       <div class="controller-map">
         <span><b>Stick gauche</b> Se déplacer</span>
         <span><b>Stick droit</b> Regarder</span>
@@ -110,17 +120,11 @@ const settingsSections = () => `
         <span><b>B / Croix droite</b> S’accroupir</span>
         <span><b>LT</b> Visée</span>
         <span><b>RT</b> Tirer</span>
-        <span><b>X / Croix gauche</b> Recharger / DPad armes</span>
+        <span><b>X / Croix gauche</b> Recharger</span>
         <span><b>Y / Croix haut</b> Arme suivante</span>
-        <span><b>LB / RB</b> LB précédente · RB suivante</span>
+        <span><b>LB / RB</b> Arme précédente / suivante</span>
         <span><b>View / DOS</b> Tableau des scores</span>
       </div>
-    </section>
-
-    <section>
-      <h3>CONTRÔLES <small>Clique sur une touche puis appuie sur la nouvelle (Échap pour annuler)</small></h3>
-      <div class="set-keys keys-grid"></div>
-      <div class="set-foot"><button class="quiet set-reset">RÉINITIALISER LES TOUCHES</button></div>
     </section>
   </div>`;
 
@@ -137,7 +141,7 @@ export class SettingsUI {
     this.el.className = 'modal-back';
     this.el.innerHTML = `
       <div class="modal" role="dialog" aria-label="Paramètres">
-        <div class="modal-head"><h2>PARAMÈTRES</h2><button class="quiet" data-close>FERMER ✕</button></div>
+        <div class="modal-head"><h2>${ico('settings')}PARAMÈTRES</h2><button class="modal-close" type="button" data-close title="Fermer" aria-label="Fermer">${ico('x')}</button></div>
         ${settingsSections()}
       </div>`;
     document.body.appendChild(this.el);

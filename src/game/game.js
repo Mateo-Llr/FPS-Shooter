@@ -3,6 +3,7 @@ import { World } from './world.js';
 import { PlayerController } from './player.js';
 import { WeaponSystem, WEAPONS } from './weapons.js';
 import { HUD } from './hud.js';
+import { Chat, cleanChat } from './chat.js';
 import { createCharacter, disposeCharacter, showGun, updateCharacterLabel, animateCharacter, gunModel, box, SHIRT_COLORS } from './character.js';
 import { MSG, MAX_PLAYERS } from '../network/protocol.js';
 import { settings } from '../ui/settings.js';
@@ -161,6 +162,8 @@ export class Game {
     this.controller = new PlayerController(this.camera, canvas, this.world);
     this.weapon = new WeaponSystem();
     this.hud = new HUD();
+    this.chat = new Chat({ canvas, controller: this.controller, onSend: text => this.sendChat(text) });
+    this.chatLast = new Map(); // hôte : anti-spam par joueur
     this.timer = new THREE.Clock();
 
     this.active = false;
@@ -410,10 +413,42 @@ export class Game {
       if (Array.isArray(d.out)) this.out = d.out.filter(Number.isInteger);
       this.finish(d.reason || 'Fin de partie', '', d.winner ?? -1);
     });
+    // Tchat : l'invité envoie son texte à l'hôte, qui valide puis diffuse { author, text } à tous.
+    n.on(MSG.CHAT, d => {
+      if (!this.active || !d) return;
+      if (this.host) this.hostReceiveChat(d.from, d.text);
+      else this.receiveChat(d.author, d.text);
+    });
     n.on('peer-left', d => this.playerLeft(d.id));
     n.on('disconnected', () => {
       if (this.active && !this.host) this.finish('Connexion perdue avec l’hôte', 'CONNEXION PERDUE', -2);
     });
+  }
+
+  // ============ TCHAT ============
+
+  sendChat(text) {
+    if (!this.active) return;
+    if (this.host) this.hostReceiveChat(this.me, text);
+    else this.network.send(MSG.CHAT, { text });
+  }
+
+  /** Hôte : valide, limite le débit, puis diffuse à tous (et affiche localement). */
+  hostReceiveChat(from, raw) {
+    if (!Number.isInteger(from) || !this.ids.includes(from) || this.gone.has(from)) return;
+    const text = cleanChat(raw);
+    if (!text) return;
+    const now = performance.now();
+    if (now - (this.chatLast.get(from) ?? 0) < 700) return;
+    this.chatLast.set(from, now);
+    this.network.send(MSG.CHAT, { author: from, text });
+    this.receiveChat(from, text);
+  }
+
+  receiveChat(author, raw) {
+    if (!Number.isInteger(author) || author < 0 || author >= MAX_PLAYERS) return;
+    const text = cleanChat(raw);
+    if (text) this.chat.add(this.nameOf(author), text, author === this.me);
   }
 
   snap() {
@@ -609,6 +644,9 @@ export class Game {
     document.querySelector('#lock-hint')?.classList.remove('hidden');
     this.crosshair.style.display = 'block';
     this.active = true;
+    this.chat.reset();
+    this.chatLast.clear();
+    this.chat.setActive(true);
     progress.startMatch();
     this.updateHUD();
   }
@@ -1800,6 +1838,7 @@ export class Game {
       aborted: false
     });
     this.active = false;
+    this.chat.setActive(false);
     this.controller.enabled = false;
     this.death = null;
     this.sbHeld = false;

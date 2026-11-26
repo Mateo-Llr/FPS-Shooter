@@ -281,12 +281,20 @@ export class Friends {
 
   /** Affiche le panneau d'amis dans `container`. `lobby: true` → boutons INVITER au lieu de REJOINDRE. */
   mount(container, { lobby = false } = {}) {
+    const ic = name => `<svg class="ic"><use href="#i-${name}"/></svg>`;
     container.innerHTML = `
-      <div class="fr-head"><h2>AMIS</h2><span class="fr-count"></span></div>
-      <div class="fr-me"><small>TON CODE AMI</small><b>${this.code}</b><button class="quiet" data-copy>COPIER</button></div>
-      <p class="fr-storage-note">Ton code et ta liste d’amis sont enregistrés sur cet appareil. Sur un nouvel ordinateur, partage ton nouveau code et ajoute tes amis à nouveau. Les codes de salon sont temporaires : l’hôte doit être en ligne.</p>
-      <div class="fr-add"><input maxlength="8" placeholder="CODE D’UN AMI" autocomplete="off" spellcheck="false" /><button data-add>AJOUTER</button></div>
-      <p class="fr-note"></p>
+      <div class="fr-me">
+        <span class="fr-me-label">${ic('user-round')}<small>TON CODE</small></span>
+        <b>${this.code}</b>
+        <button class="fr-icon" type="button" data-copy title="Copier mon code" aria-label="Copier mon code">${ic('copy')}</button>
+        <span class="fr-info" tabindex="0" role="img" title="Ton code et ta liste d’amis sont enregistrés sur cet appareil. Sur un nouvel ordinateur, partage ton nouveau code et ajoute tes amis à nouveau. Les codes de salon sont temporaires : l’hôte doit être en ligne." aria-label="Ton code et ta liste d’amis sont enregistrés sur cet appareil. Sur un nouvel ordinateur, partage ton nouveau code et ajoute tes amis à nouveau. Les codes de salon sont temporaires : l’hôte doit être en ligne.">${ic('info')}</span>
+      </div>
+      <div class="fr-add">
+        <input maxlength="8" placeholder="CODE D’UN AMI" aria-label="Code d’un ami" autocomplete="off" spellcheck="false" />
+        <button type="button" data-add title="Ajouter" aria-label="Ajouter un ami">${ic('user-plus')}</button>
+      </div>
+      <p class="fr-note" role="status"></p>
+      <div class="fr-head"><span class="fr-count"></span></div>
       <div class="fr-list"></div>`;
     const input = container.querySelector('input');
     const note = container.querySelector('.fr-note');
@@ -321,8 +329,12 @@ export class Friends {
         if (text != null) e.textContent = text;
         return e;
       };
-      const button = (label, fn, cls = '') => {
-        const b = el('button', cls, label);
+      const button = (icon, title, fn, cls = '', text = '') => {
+        const b = el('button', cls);
+        b.type = 'button';
+        b.title = title;
+        b.setAttribute('aria-label', title);
+        b.innerHTML = `<svg class="ic"><use href="#i-${icon}"/></svg>${text ? `<span>${text}</span>` : ''}`;
         b.onclick = fn;
         return b;
       };
@@ -332,7 +344,7 @@ export class Friends {
         const row = el('div', 'fr-row req');
         row.append(el('span', 'fr-dot'), this.nameCell(r.name, 'DEMANDE D’AMI'));
         const acts = el('div', 'fr-acts');
-        acts.append(button('✓', () => this.accept(r.code), 'ok'), button('✕', () => this.decline(r.code), 'no'));
+        acts.append(button('check', 'Accepter', () => this.accept(r.code), 'ok'), button('x', 'Refuser', () => this.decline(r.code), 'no'));
         row.appendChild(acts);
         rows.push(row);
       }
@@ -349,9 +361,9 @@ export class Friends {
         if (s) label = s.ingame ? 'EN PARTIE' : s.room ? `DANS UN SALON · ${s.count}` : 'EN LIGNE';
         row.append(el('span', 'fr-dot' + (s?.ingame ? ' busy' : s ? ' on' : '')), this.nameCell(f.name, label));
         const acts = el('div', 'fr-acts');
-        if (!lobby && s?.open && s.room) acts.append(button('REJOINDRE', () => this.cb.onJoin(s.room), 'join'));
-        if (lobby && s && !s.ingame) acts.append(button('INVITER', () => this.invite(f.code), 'join'));
-        acts.append(button('✕', () => { if (confirm(`Retirer ${f.name} de tes amis ?`)) this.remove(f.code); }, 'no'));
+        if (!lobby && s?.open && s.room) acts.append(button('log-in', 'Rejoindre le salon', () => this.cb.onJoin(s.room), 'join', 'REJOINDRE'));
+        if (lobby && s && !s.ingame) acts.append(button('send', 'Inviter', () => this.invite(f.code), 'join', 'INVITER'));
+        acts.append(button('x', 'Retirer de mes amis', () => { if (confirm(`Retirer ${f.name} de tes amis ?`)) this.remove(f.code); }, 'no'));
         row.appendChild(acts);
         rows.push(row);
       }
@@ -361,7 +373,7 @@ export class Friends {
         const row = el('div', 'fr-row pend');
         row.append(el('span', 'fr-dot'), this.nameCell(code, 'DEMANDE EN ATTENTE'));
         const acts = el('div', 'fr-acts');
-        acts.append(button('✕', () => this.cancelPending(code), 'no'));
+        acts.append(button('x', 'Annuler la demande', () => this.cancelPending(code), 'no'));
         row.appendChild(acts);
         rows.push(row);
       }

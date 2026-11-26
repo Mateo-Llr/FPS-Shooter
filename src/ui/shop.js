@@ -6,10 +6,6 @@ import { progress } from '../game/progress.js';
 const fmt = value => Math.round(value).toLocaleString('fr-FR');
 
 const PREVIEW_SIZE = 320;
-const PREVIEW_CSS = `
-.shop-item-icon.has-model{padding:0;overflow:hidden;background-image:radial-gradient(circle at 50% 42%,rgba(240,120,69,.22),transparent 68%)}
-.shop-item-icon.has-model canvas{display:block;width:100%;height:100%}
-.shop-card.owned .shop-item-icon.has-model canvas{opacity:.85}`;
 
 export class ShopUI {
   constructor(container) {
@@ -18,20 +14,11 @@ export class ShopUI {
     this.canvases = new Map();
     this.raf = 0;
 
-    this.addStyles();
     this.setupPreviews();
     this.render();
     this.bind();
     progress.onChange(() => this.render());
     this.startLoop();
-  }
-
-  addStyles() {
-    if (document.querySelector('#shop-preview-styles')) return;
-    const style = document.createElement('style');
-    style.id = 'shop-preview-styles';
-    style.textContent = PREVIEW_CSS;
-    document.head.appendChild(style);
   }
 
   /**
@@ -115,40 +102,29 @@ export class ShopUI {
   }
 
   render() {
+    const icon = name => `<svg class="ic"><use href="#i-${name}"/></svg>`;
     this.container.innerHTML = `
-      <div class="shop-layout">
-        <header class="shop-head">
-          <div>
-            <p class="eyebrow">BOUTIQUE · OBJETS COSMÉTIQUES</p>
-            <h1>TON STYLE,<br /><span>TES RÈGLES.</span></h1>
-            <p>Les objets achetés sont disponibles dans le menu Customisation.</p>
-          </div>
-          <div class="shop-credit"><span>◈</span><strong>${fmt(progress.coins)}</strong><small>CRÉDITS DISPONIBLES</small></div>
-        </header>
-        <p class="shop-message" aria-live="polite">${this.message}</p>
-        <div class="shop-grid">
-          ${COSMETIC_ITEMS.map(item => {
-            const owned = progress.ownsCosmetic(item.id);
-            const visual = this.previews.has(item.id)
-              ? `<div class="shop-item-icon has-model" role="img" aria-label="Aperçu 3D : ${item.label}">
-                  <canvas width="${PREVIEW_SIZE}" height="${PREVIEW_SIZE}" data-preview="${item.id}"></canvas>
-                </div>`
-              : `<div class="shop-item-icon" aria-hidden="true">${item.icon}</div>`;
-            return `
-              <article class="shop-card${owned ? ' owned' : ''}">
-                ${visual}
-                <div class="shop-item-copy">
-                  <span class="menu-tag">ACCESSOIRE</span>
-                  <h2>${item.label}</h2>
-                  <p>${item.description}</p>
-                </div>
-                <button class="shop-buy${owned ? ' shop-owned' : ''}" type="button"
-                  data-cosmetic="${item.id}" ${owned ? 'disabled' : ''}>
-                  ${owned ? '✓ ACHETÉ' : `ACHETER · ${fmt(item.price)} ◈`}
-                </button>
-              </article>`;
-          }).join('')}
-        </div>
+      <p class="sh-message" aria-live="polite">${this.message}</p>
+      <div class="sh-grid">
+        ${COSMETIC_ITEMS.map(item => {
+          const owned = progress.ownsCosmetic(item.id);
+          const short = !owned && progress.coins < item.price;
+          const visual = this.previews.has(item.id)
+            ? `<canvas width="${PREVIEW_SIZE}" height="${PREVIEW_SIZE}" data-preview="${item.id}"></canvas>`
+            : `<span class="sh-glyph" aria-hidden="true">${item.icon}</span>`;
+          return `
+            <article class="sh-card${owned ? ' owned' : ''}">
+              <div class="sh-visual" role="img" aria-label="${item.label}">${visual}</div>
+              <div class="sh-info">
+                <h2>${item.label}</h2>
+                <p>${item.description}</p>
+              </div>
+              <button class="sh-buy${owned ? ' is-owned' : ''}${short ? ' is-short' : ''}" type="button"
+                data-cosmetic="${item.id}" ${owned ? 'disabled' : ''}>
+                ${owned ? `${icon('check')}<span>Acheté</span>` : `${icon('coins')}<span>${fmt(item.price)}</span>`}
+              </button>
+            </article>`;
+        }).join('')}
       </div>`;
 
     // Le HTML a été recréé : on retrouve les nouveaux canvas.
@@ -160,7 +136,7 @@ export class ShopUI {
 
   bind() {
     this.container.addEventListener('click', event => {
-      const button = event.target.closest('.shop-buy');
+      const button = event.target.closest('.sh-buy');
       if (!button || button.disabled) return;
       const result = progress.purchaseCosmetic(button.dataset.cosmetic);
       this.message = result === 'purchased'

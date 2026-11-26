@@ -3,72 +3,205 @@ import { APPEARANCE_OPTIONS, getAppearance, saveAppearance } from '../game/custo
 import { createCharacter, disposeCharacter, poseIdle, showGun } from '../game/character.js';
 import { progress } from '../game/progress.js';
 
+const icon = name => `<svg class="ic"><use href="#i-${name}"/></svg>`;
+
+/** Catégorie → [icône, libellé] */
+const CATEGORIES = {
+  skin: ['user-round', 'Couleur de peau'],
+  hairColor: ['droplet', 'Couleur des cheveux'],
+  hairStyle: ['scissors', 'Coupe'],
+  shirt: ['palette', 'Couleur du haut'],
+  shirtStyle: ['shirt', 'Style du haut'],
+  pants: ['columns-2', 'Pantalon'],
+  shoes: ['footprints', 'Chaussures'],
+  accessory: ['glasses', 'Accessoire']
+};
+
+/** Catégories affichées en vignettes 3D → partie du personnage à cadrer (comme dans l'éditeur 3D). */
+const MODEL_FOCUS = { hairStyle: 'head', accessory: 'head', shirtStyle: 'torso' };
+const FOCUS_DIRECTION = { head: [0.45, 0.25, 1], torso: [0.4, 0.2, 1] };
+const TILE_SIZE = 192;
+
 export class CustomizationUI {
   constructor(container) {
     this.container = container;
     this.appearance = getAppearance();
+    this.tileVersion = 0;
+    this.setupTilePreviews();
     this.render();
+    this.updateValues();
     this.initPreview();
     this.bind();
-    progress.onChange(() => this.renderAccessoryChoices());
+    progress.onChange(() => { this.renderAccessoryChoices(); this.renderTilePreviews(); });
+    // Les vignettes d'un onglet masqué sont dessinées au moment où il devient visible.
+    new ResizeObserver(() => this.renderTilePreviews()).observe(this.container);
+    this.renderTilePreviews();
   }
 
   render() {
-    const labels = {
-      skin: 'COULEUR DE PEAU',
-      hairColor: 'COULEUR DES CHEVEUX',
-      hairStyle: 'COUPE',
-      shirt: 'COULEUR DU T-SHIRT',
-      shirtStyle: 'STYLE DU HAUT',
-      pants: 'PANTALON',
-      shoes: 'CHAUSSURES',
-      accessory: 'ACCESSOIRE'
-    };
-
     this.container.innerHTML = `
-      <div class="custom-layout">
-        <section class="custom-preview-panel">
-          <div class="custom-preview-head">
-            <div><span class="menu-tag">APERÇU</span><small>TON PERSONNAGE</small></div>
-            <span class="preview-live"><i></i> EN DIRECT</span>
-          </div>
+      <div class="cz">
+        <section class="cz-stage">
           <div class="avatar-stage">
-            <div class="avatar-glow"></div>
             <canvas class="avatar-preview-canvas" aria-label="Aperçu 3D de ton personnage"></canvas>
           </div>
-          <div class="preview-caption"><b id="custom-preview-name">TON AGENT</b><span>PRÊT AU COMBAT</span></div>
-          <button class="quiet custom-reset" type="button">RÉINITIALISER L’APPARENCE</button>
+          <b id="custom-preview-name" class="cz-name">TON AGENT</b>
+          <button class="cz-reset custom-reset" type="button" title="Réinitialiser l’apparence" aria-label="Réinitialiser l’apparence">${icon('rotate-ccw')}</button>
         </section>
-        <section class="custom-options">
-          <header class="custom-options-head">
-            <div><span class="menu-tag">ARSENAL VISUEL</span><h2>PERSONNALISATION</h2></div>
-            <span class="custom-count">08 CATÉGORIES</span>
-          </header>
-          <div class="custom-category-grid">
-            ${Object.entries(APPEARANCE_OPTIONS).map(([category, options]) => `
-              <section class="custom-category" data-category="${category}">
-                <h3>${labels[category]}</h3>
-                <div class="custom-options-list">
+
+        <section class="cz-editor">
+          <nav class="cz-tabs" aria-label="Catégories">
+            ${Object.keys(APPEARANCE_OPTIONS).map((category, index) => `
+              <button class="cz-tab${index === 0 ? ' active' : ''}" type="button" data-tab="${category}"
+                aria-pressed="${index === 0}" title="${CATEGORIES[category][1]}" aria-label="${CATEGORIES[category][1]}">
+                ${icon(CATEGORIES[category][0])}<span class="cz-tab-label">${CATEGORIES[category][1]}</span>
+              </button>`).join('')}
+          </nav>
+          <div class="cz-panels">
+            ${Object.entries(APPEARANCE_OPTIONS).map(([category, options], index) => `
+              <section class="custom-category${index === 0 ? '' : ' hidden'}" data-category="${category}">
+                <h3>${CATEGORIES[category][1]}<small class="cz-value"></small></h3>
+                <div class="custom-options-list${options.some(option => option.color) ? ' ribbon' : ''}">
                   ${(category === 'accessory'
                     ? options.filter(option => option.id === 'none' || progress.ownsCosmetic(option.id))
-                    : options).map(option => `
-                    <button class="custom-choice${this.appearance[category] === option.id ? ' selected' : ''}"
-                      type="button" data-category="${category}" data-value="${option.id}"
-                      aria-pressed="${this.appearance[category] === option.id}"
-                      title="${option.label}">
-                      ${option.color ? `<i class="choice-swatch" style="--swatch:${option.color}"></i>` : ''}
-                      <span>${option.label}</span>
-                    </button>`).join('')}
+                    : options).map(option => this.choiceHTML(category, option)).join('')}
                 </div>
               </section>`).join('')}
           </div>
-          <p class="custom-save-note"><i></i> Tes choix sont sauvegardés automatiquement.</p>
         </section>
       </div>`;
   }
 
+  choiceHTML(category, option) {
+    const selected = this.appearance[category] === option.id;
+    const model = this.tileRenderer && MODEL_FOCUS[category];
+    return `
+      <button class="custom-choice${option.color ? ' swatch' : ''}${model ? ' model' : ''}${selected ? ' selected' : ''}"
+        type="button" data-category="${category}" data-value="${option.id}"
+        aria-pressed="${selected}" title="${option.label}" ${option.color ? `aria-label="${option.label}"` : ''}
+        ${option.color ? `style="--swatch:${option.color}"` : ''}>
+        ${option.color ? icon('check') : ''}
+        ${model ? `<canvas width="${TILE_SIZE}" height="${TILE_SIZE}" data-preview-category="${category}" data-preview-value="${option.id}" aria-hidden="true"></canvas>` : ''}
+        ${option.color ? '' : `<span>${option.label}</span>`}
+      </button>`;
+  }
+
+  // ------------------------------------------------------------------ vignettes 3D
+
+  /**
+   * Un seul moteur WebGL pour toutes les vignettes : chaque variante est dessinée sur le personnage
+   * actuel, cadrée sur la tête (ou le torse) comme dans l'éditeur 3D, puis copiée dans son canvas 2D.
+   */
+  setupTilePreviews() {
+    try {
+      this.tileRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+      this.tileRenderer.setPixelRatio(1);
+      this.tileRenderer.setSize(TILE_SIZE, TILE_SIZE, false);
+      this.tileRenderer.setClearColor(0x000000, 0);
+      this.tileRenderer.outputColorSpace = THREE.SRGBColorSpace;
+      this.tileRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.tileRenderer.toneMappingExposure = 1.1;
+    } catch (error) {
+      console.warn('Vignettes 3D indisponibles :', error);
+      this.tileRenderer = null;
+      return;
+    }
+    this.tileScene = new THREE.Scene();
+    this.tileScene.add(new THREE.HemisphereLight(0xe4efff, 0x20262b, 1.7));
+    const key = new THREE.DirectionalLight(0xffe2bd, 2.8);
+    key.position.set(-2, 3, 4);
+    this.tileScene.add(key);
+    const rim = new THREE.DirectionalLight(0xf07845, 1.6);
+    rim.position.set(3, 2, -3);
+    this.tileScene.add(rim);
+    this.tileCamera = new THREE.PerspectiveCamera(40, 1, 0.05, 40);
+    window.addEventListener('beforeunload', () => this.tileRenderer.dispose(), { once: true });
+  }
+
+  /** Dessine les vignettes visibles qui ne reflètent pas encore l'apparence actuelle. */
+  renderTilePreviews() {
+    if (!this.tileRenderer) return;
+    for (const canvas of this.container.querySelectorAll('canvas[data-preview-value]')) {
+      if (!canvas.offsetParent) continue;
+      if (canvas.dataset.version === String(this.tileVersion)) continue;
+      this.drawTile(canvas);
+      canvas.dataset.version = String(this.tileVersion);
+    }
+  }
+
+  drawTile(canvas) {
+    const category = canvas.dataset.previewCategory;
+    const appearance = { ...this.appearance, [category]: canvas.dataset.previewValue };
+    // Un accessoire masque les cheveux : on le retire pour montrer la coupe (comme l'éditeur).
+    if (category === 'hairStyle') appearance.accessory = 'none';
+
+    let character;
+    try {
+      character = createCharacter({ appearance });
+      character.group.rotation.y = Math.PI;
+      this.tileScene.add(character.group);
+      this.frameTile(character, MODEL_FOCUS[category]);
+      this.tileRenderer.render(this.tileScene, this.tileCamera);
+      const g = canvas.getContext('2d');
+      g.clearRect(0, 0, canvas.width, canvas.height);
+      g.drawImage(this.tileRenderer.domElement, 0, 0, canvas.width, canvas.height);
+    } catch (error) {
+      console.warn('Vignette 3D impossible :', error);
+    } finally {
+      if (character) {
+        this.tileScene.remove(character.group);
+        disposeCharacter(character);
+      }
+    }
+  }
+
+  /** Même cadrage que l'éditeur : boîte englobante de la partie, caméra en biais à distance ajustée. */
+  frameTile(character, focus) {
+    const rootId = focus === 'head' ? 'head' : 'torso';
+    character.group.updateWorldMatrix(true, true);
+    let part = null;
+    character.group.traverse(object => { if (!part && object.userData?.editorId === rootId) part = object; });
+
+    const box = new THREE.Box3();
+    if (part) {
+      box.setFromObject(part);
+    } else {
+      // Repli : tranche du personnage à la hauteur de la tête ou du torse.
+      box.setFromObject(character.group);
+      const height = box.max.y - box.min.y;
+      if (focus === 'head') box.min.y = box.max.y - height * 0.22;
+      else { box.max.y -= height * 0.18; box.min.y = box.max.y - height * 0.38; }
+    }
+    const center = box.getCenter(new THREE.Vector3());
+    const radius = Math.max(box.getSize(new THREE.Vector3()).length() * 0.5, 0.2);
+    const distance = radius / Math.sin(THREE.MathUtils.degToRad(this.tileCamera.fov) / 2) * 1.15;
+    const direction = new THREE.Vector3(...FOCUS_DIRECTION[focus]).normalize();
+    this.tileCamera.position.copy(center).addScaledVector(direction, distance);
+    this.tileCamera.lookAt(center);
+  }
+
+  /** Affiche, à côté du titre de chaque catégorie, le nom de l'option choisie. */
+  updateValues() {
+    this.container.querySelectorAll('.custom-category').forEach(section => {
+      const selected = section.querySelector('.custom-choice.selected');
+      section.querySelector('.cz-value').textContent = selected?.title ?? '';
+    });
+  }
+
   bind() {
     this.container.addEventListener('click', event => {
+      const tab = event.target.closest('.cz-tab');
+      if (tab) {
+        this.container.querySelectorAll('.cz-tab').forEach(item => {
+          item.classList.toggle('active', item === tab);
+          item.setAttribute('aria-pressed', String(item === tab));
+        });
+        this.container.querySelectorAll('.custom-category').forEach(section => {
+          section.classList.toggle('hidden', section.dataset.category !== tab.dataset.tab);
+        });
+        this.renderTilePreviews();
+        return;
+      }
       const choice = event.target.closest('.custom-choice');
       if (choice) {
         this.appearance[choice.dataset.category] = choice.dataset.value;
@@ -80,11 +213,17 @@ export class CustomizationUI {
           button.setAttribute('aria-pressed', String(selected));
         });
         this.updatePreview();
+        this.updateValues();
+        this.tileVersion++;
+        this.renderTilePreviews();
       }
       if (event.target.closest('.custom-reset')) {
         this.appearance = saveAppearance({});
         this.syncChoices();
+        this.updateValues();
         this.updatePreview();
+        this.tileVersion++;
+        this.renderTilePreviews();
       }
     });
   }
@@ -95,20 +234,8 @@ export class CustomizationUI {
     const options = APPEARANCE_OPTIONS.accessory.filter(option =>
       option.id === 'none' || progress.ownsCosmetic(option.id)
     );
-    list.replaceChildren(...options.map(option => {
-      const button = document.createElement('button');
-      const selected = this.appearance.accessory === option.id;
-      button.className = `custom-choice${selected ? ' selected' : ''}`;
-      button.type = 'button';
-      button.dataset.category = 'accessory';
-      button.dataset.value = option.id;
-      button.setAttribute('aria-pressed', String(selected));
-      button.title = option.label;
-      const label = document.createElement('span');
-      label.textContent = option.label;
-      button.appendChild(label);
-      return button;
-    }));
+    list.innerHTML = options.map(option => this.choiceHTML('accessory', option)).join('');
+    this.updateValues();
   }
 
   initPreview() {

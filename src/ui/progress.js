@@ -9,6 +9,14 @@ const el = (tag, cls = '', text = '') => {
   return n;
 };
 const fmt = n => Math.round(n).toLocaleString('fr-FR');
+const icon = name => {
+  const span = el('span', 'ic-wrap');
+  span.innerHTML = `<svg class="ic"><use href="#i-${name}"/></svg>`;
+  return span;
+};
+
+/** Couleur de chaque palier de quête (du plus simple au plus difficile). */
+const TIER_COLORS = ['#5fd0c4', '#f0b44d', '#f07845'];
 const visible = node => !!node && node.offsetParent !== null;
 
 function bar(value, goal, cls = '') {
@@ -21,7 +29,7 @@ function bar(value, goal, cls = '') {
 
 function reward(amount, cls = '') {
   const r = el('span', `p-reward ${cls}`);
-  r.append(el('i', '', '◈'), document.createTextNode(`+${fmt(amount)}`));
+  r.append(icon('coins'), document.createTextNode(`+${fmt(amount)}`));
   return r;
 }
 
@@ -33,6 +41,7 @@ export class ProgressUI {
     this.questsEl = quests;
     this.achEl = achievements;
     this.lastCoins = progress.coins;
+    this.achFilter = 'all';
 
     this.toasts = el('div', 'p-toasts');
     this.toasts.setAttribute('aria-live', 'polite');
@@ -82,64 +91,61 @@ export class ProgressUI {
 
   renderQuests() {
     const quests = progress.dailyQuests();
-    const doneCount = quests.filter(x => x.done).length;
     const root = el('div', 'quests-layout');
 
-    const side = el('aside', 'quests-side');
-    side.append(
-      el('p', 'eyebrow', 'MISSIONS · RENOUVELÉES CHAQUE JOUR'),
-      (() => { const h = el('h1'); h.append('QUÊTES', el('br'), el('span', '', 'DU JOUR.')); return h; })()
-    );
-    const cd = el('div', 'quests-countdown');
-    cd.append(el('small', '', 'NOUVELLES QUÊTES DANS'), el('strong', '', '--:--:--'));
-    cd.lastChild.dataset.countdown = '';
-    side.appendChild(cd);
-
-    const s = progress.stats;
-    const grid = el('div', 'quests-stats');
-    const stat = (label, value) => {
-      const c = el('div');
-      c.append(el('strong', '', value), el('small', '', label));
-      grid.appendChild(c);
-    };
-    stat('ÉLIMINATIONS', fmt(s.kills));
-    stat('MORTS', fmt(s.deaths));
-    stat('RATIO', (s.deaths ? s.kills / s.deaths : s.kills).toFixed(2));
-    stat('TIRS À LA TÊTE', fmt(s.heads));
-    stat('PARTIES', fmt(s.matches));
-    stat('VICTOIRES', fmt(s.wins));
-    stat('TEMPS DE JEU', fmtDuration(s.playtime));
-    stat('MEILLEURE SÉRIE', fmt(s.bestStreak));
-    side.appendChild(grid);
-
-    const list = el('section', 'quests-list');
+    // Compte à rebours avant le renouvellement des quêtes
     const head = el('div', 'quests-head');
-    head.append(el('h2', '', 'MISSIONS ACTIVES'), el('span', '', `${doneCount} / ${quests.length} TERMINÉES`));
-    list.appendChild(head);
+    const cd = el('div', 'quests-countdown');
+    cd.title = 'Nouvelles quêtes dans';
+    cd.append(icon('timer'), el('strong', '', '--:--:--'));
+    cd.lastChild.dataset.countdown = '';
+    head.appendChild(cd);
 
-    for (const quest of quests) {
-      const card = el('article', `quest-card tier-${quest.tier}${quest.done ? ' done' : ''}`);
+    const grid = el('section', 'quests-grid');
+    quests.forEach((quest, index) => {
+      const card = el('article', `quest-card${quest.done ? ' done' : ''}`);
+      card.style.setProperty('--tier', TIER_COLORS[Math.min(index, TIER_COLORS.length - 1)]);
       const top = el('div', 'quest-top');
-      top.append(el('span', 'quest-tier', TIER_LABEL[quest.tier]), reward(quest.reward, quest.done ? 'claimed' : ''));
+      const tier = el('span', 'quest-tier');
+      tier.append(quest.done ? icon('check') : icon('target'), document.createTextNode(TIER_LABEL[quest.tier]));
+      top.append(tier, reward(quest.reward, quest.done ? 'claimed' : ''));
       const label = quest.unit === 'time'
         ? `${Math.floor(quest.progress / 60)} / ${quest.goal / 60} min`
         : `${fmt(quest.progress)} / ${fmt(quest.goal)}`;
-      const foot = el('div', 'quest-foot');
-      foot.append(el('span', '', quest.done ? '✓ TERMINÉE' : 'EN COURS'), el('b', '', label));
-      card.append(top, el('h3', '', quest.text), bar(quest.progress, quest.goal, 'teal'), foot);
-      list.appendChild(card);
-    }
+      const meter = el('div', 'quest-meter');
+      meter.append(bar(quest.progress, quest.goal), el('b', '', label));
+      card.append(top, el('h3', '', quest.text), meter);
+      grid.appendChild(card);
+    });
 
+    // Bonus : un cran par quête terminée
     const bonus = el('article', `quest-bonus${progress.dailyBonusDone ? ' done' : ''}`);
-    const bt = el('div');
-    bt.append(
-      el('h3', '', 'BONUS QUOTIDIEN'),
-      el('p', '', progress.dailyBonusDone ? 'Bonus récupéré. Reviens demain !' : 'Termine les 3 quêtes pour le débloquer.')
-    );
-    bonus.append(bt, reward(DAILY_BONUS, progress.dailyBonusDone ? 'claimed' : ''));
-    list.appendChild(bonus);
+    bonus.title = progress.dailyBonusDone ? 'Bonus récupéré' : 'Termine toutes les quêtes pour le débloquer';
+    const pips = el('div', 'bonus-pips');
+    quests.forEach(quest => pips.appendChild(el('span', quest.done ? 'on' : '')));
+    bonus.append(icon(progress.dailyBonusDone ? 'check' : 'gift'), el('h3', '', 'Bonus quotidien'), pips,
+      reward(DAILY_BONUS, progress.dailyBonusDone ? 'claimed' : ''));
 
-    root.append(side, list);
+    // Statistiques : une seule bande
+    const s = progress.stats;
+    const stats = el('section', 'quests-stats');
+    const stat = (name, label, value) => {
+      const c = el('div', 'stat');
+      const text = el('div');
+      text.append(el('strong', '', value), el('small', '', label));
+      c.append(icon(name), text);
+      stats.appendChild(c);
+    };
+    stat('crosshair', 'ÉLIMINATIONS', fmt(s.kills));
+    stat('skull', 'MORTS', fmt(s.deaths));
+    stat('scale', 'RATIO', (s.deaths ? s.kills / s.deaths : s.kills).toFixed(2));
+    stat('target', 'TIRS À LA TÊTE', fmt(s.heads));
+    stat('gamepad-2', 'PARTIES', fmt(s.matches));
+    stat('trophy', 'VICTOIRES', fmt(s.wins));
+    stat('timer', 'TEMPS DE JEU', fmtDuration(s.playtime));
+    stat('flame', 'MEILLEURE SÉRIE', fmt(s.bestStreak));
+
+    root.append(head, grid, bonus, stats);
     this.questsEl.replaceChildren(root);
     this.tick();
   }
@@ -150,46 +156,55 @@ export class ProgressUI {
     const unlocked = ACHIEVEMENTS.filter(x => progress.isUnlocked(x.id)).length;
     const root = el('div', 'ach-layout');
 
-    const head = el('header', 'ach-head');
-    const title = el('div');
-    title.append(
-      el('p', 'eyebrow', 'TROPHÉES · RÉCOMPENSES EN CRÉDITS'),
-      (() => { const h = el('h1'); h.append('SUCCÈS ', el('span', '', 'DÉBLOQUÉS.')); return h; })()
-    );
-    const total = el('div', 'ach-total');
-    total.append(el('strong', '', `${unlocked}`), el('span', '', `/ ${ACHIEVEMENTS.length}`));
-    const meter = el('div', 'ach-meter');
-    meter.append(total, bar(unlocked, ACHIEVEMENTS.length, 'gold'));
-    head.append(title, meter);
-    root.appendChild(head);
+    // Progression globale
+    const total = el('header', 'ach-total');
+    const count = el('div', 'ach-count');
+    count.append(icon('trophy'), el('strong', '', `${unlocked}`), el('span', '', `/ ${ACHIEVEMENTS.length}`));
+    total.append(count, bar(unlocked, ACHIEVEMENTS.length, 'gold'));
+    root.appendChild(total);
+
+    // Filtre par catégorie : une barre d'onglets
+    const tabs = el('nav', 'ach-tabs');
+    tabs.setAttribute('aria-label', 'Catégories de succès');
+    const entries = [['all', 'TOUT', unlocked, ACHIEVEMENTS.length]].concat(ACHIEVEMENT_CATEGORIES.map(([id, label]) => {
+      const items = ACHIEVEMENTS.filter(x => x.cat === id);
+      return [id, label, items.filter(x => progress.isUnlocked(x.id)).length, items.length];
+    }));
+    for (const [id, label, done, size] of entries) {
+      const tab = el('button', `ach-tab${this.achFilter === id ? ' active' : ''}`);
+      tab.type = 'button';
+      tab.setAttribute('aria-pressed', String(this.achFilter === id));
+      tab.append(el('span', '', label), el('small', '', `${done}/${size}`));
+      tab.onclick = () => { this.achFilter = id; this.renderAchievements(); };
+      tabs.appendChild(tab);
+    }
+    root.appendChild(tabs);
+
+    const card = ach => {
+      const at = progress.isUnlocked(ach.id);
+      const value = progress.achievementValue(ach);
+      const node = el('article', `ach-card${at ? ' unlocked' : ''}`);
+      const body = el('div', 'ach-body');
+      const label = ach.unit === 'time'
+        ? `${fmtDuration(value)} / ${fmtDuration(ach.goal)}`
+        : `${fmt(value)} / ${fmt(ach.goal)}`;
+      const foot = el('div', 'ach-foot');
+      const state = el('span');
+      if (at) state.append(icon('check'), document.createTextNode(new Date(at).toLocaleDateString('fr-FR')));
+      else state.textContent = label;
+      foot.append(state, reward(ach.reward, at ? 'claimed' : ''));
+      body.append(el('h3', '', ach.name), el('p', '', ach.desc), bar(value, ach.goal, 'gold'), foot);
+      node.append(el('div', 'ach-icon', ach.icon), body);
+      return node;
+    };
 
     for (const [catId, catLabel] of ACHIEVEMENT_CATEGORIES) {
-      const items = ACHIEVEMENTS.filter(x => x.cat === catId);
-      const done = items.filter(x => progress.isUnlocked(x.id)).length;
+      if (this.achFilter !== 'all' && this.achFilter !== catId) continue;
       const section = el('section', 'ach-section');
-      const h = el('div', 'ach-section-head');
-      h.append(el('h2', '', catLabel), el('span', '', `${done} / ${items.length}`));
+      if (this.achFilter === 'all') section.appendChild(el('h2', '', catLabel));
       const grid = el('div', 'ach-grid');
-
-      for (const ach of items) {
-        const at = progress.isUnlocked(ach.id);
-        const value = progress.achievementValue(ach);
-        const card = el('article', `ach-card${at ? ' unlocked' : ''}`);
-        const icon = el('div', 'ach-icon', ach.icon);
-        const body = el('div', 'ach-body');
-        const label = ach.unit === 'time'
-          ? `${fmtDuration(value)} / ${fmtDuration(ach.goal)}`
-          : `${fmt(value)} / ${fmt(ach.goal)}`;
-        const foot = el('div', 'ach-foot');
-        foot.append(
-          el('span', '', at ? `✓ ${new Date(at).toLocaleDateString('fr-FR')}` : label),
-          reward(ach.reward, at ? 'claimed' : '')
-        );
-        body.append(el('h3', '', ach.name), el('p', '', ach.desc), bar(value, ach.goal, 'gold'), foot);
-        card.append(icon, body);
-        grid.appendChild(card);
-      }
-      section.append(h, grid);
+      ACHIEVEMENTS.filter(x => x.cat === catId).forEach(ach => grid.appendChild(card(ach)));
+      section.appendChild(grid);
       root.appendChild(section);
     }
     this.achEl.replaceChildren(root);
@@ -197,11 +212,14 @@ export class ProgressUI {
 
   // ---------- Notifications ----------
 
-  toast({ kind, title, text, icon, reward: amount }) {
+  toast({ kind, title, text, icon: glyphText, reward: amount }) {
     const t = el('div', `p-toast ${kind}`);
     const body = el('div');
     body.append(el('small', '', title), el('strong', '', text));
-    t.append(el('div', 'p-toast-icon', icon || (kind === 'quest' ? '◆' : '◈')), body);
+    const glyph = el('div', 'p-toast-icon');
+    if (glyphText) glyph.textContent = glyphText;
+    else glyph.appendChild(icon(kind === 'quest' ? 'target' : 'trophy'));
+    t.append(glyph, body);
     if (amount) t.appendChild(reward(amount));
     this.toasts.appendChild(t);
     while (this.toasts.children.length > 4) this.toasts.firstChild.remove();

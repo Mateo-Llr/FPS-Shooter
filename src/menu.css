@@ -1,0 +1,225 @@
+/* ================================================================
+   MENU PRINCIPAL — refonte (chargé après style.css et progress.css)
+   Icônes : Lucide via Iconify, sprite inline dans index.html
+   ================================================================ */
+
+.ic {
+  width: 1em;
+  height: 1em;
+  flex: none;
+  display: block;
+}
+
+/* ---------- Barre du haut : icônes, libellé sur l'onglet actif ---------- */
+.menu-tabs { gap: 2px; }
+.menu-tab { gap: 0; padding: 0 20px; font-size: 22px; }
+.menu-tab .tab-label {
+  max-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  opacity: 0;
+  white-space: nowrap;
+  color: inherit;
+  font-size: 11px;
+  letter-spacing: .12em;
+  transition: max-width .3s cubic-bezier(.2, .75, .25, 1), margin-left .3s, opacity .2s;
+}
+.menu-tab.active .tab-label { max-width: 150px; margin-left: 10px; opacity: 1; }
+.menu-tab.active span { color: inherit; }
+
+.wallet { justify-self: end; display: flex; align-items: center; gap: 8px; }
+.wallet .ic { width: 20px; height: 20px; color: var(--orange-light); }
+
+/* ---------- Vue Jouer ---------- */
+.menu-view.active[data-view="play"] {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0;
+  padding: 0 0 6px;
+}
+
+.hub {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(22px, 5vh, 52px);
+  width: min(1060px, 100%);
+  margin: 0 auto;
+}
+
+/* Pseudo : le héros de l'écran */
+.tag-field {
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 2vw, 28px);
+  padding-bottom: 6px;
+  border-bottom: 2px solid rgba(173, 190, 200, .22);
+  color: #5d6c74;
+  cursor: text;
+  transition: border-color .25s, color .25s;
+}
+.tag-field .ic { width: clamp(40px, 6vw, 84px); height: clamp(40px, 6vw, 84px); stroke-width: 1.5; }
+.tag-field:focus-within { border-color: var(--orange); color: var(--orange-light); }
+.tag-field input {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: #f4f3ee;
+  font: 800 clamp(56px, 9.5vw, 132px)/1.02 'Barlow Condensed', sans-serif;
+  letter-spacing: -.01em;
+  text-transform: uppercase;
+}
+.tag-field input::placeholder { color: #323f47; }
+.tag-field input:focus { box-shadow: none; }
+
+/* Créer / Rejoindre */
+.actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.action-create,
+.action-join {
+  height: clamp(88px, 14vh, 124px);
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 0 100%);
+}
+
+.action-create {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 0 34px;
+  border: 0;
+  background: linear-gradient(120deg, #f58a55, #d9552f);
+  color: #fff;
+  font: 800 clamp(24px, 3.2vw, 38px)/1 'Barlow Condensed', sans-serif;
+  letter-spacing: .06em;
+  text-align: left;
+  box-shadow: none;
+}
+.action-create .ic { width: 46px; height: 46px; transition: transform .3s cubic-bezier(.2, .75, .25, 1); }
+.action-create:hover:not(:disabled) {
+  background: linear-gradient(120deg, #ff9a64, #e8603a);
+  border: 0;
+  box-shadow: none;
+  transform: none;
+}
+.action-create:hover:not(:disabled) .ic { transform: rotate(-12deg) scale(1.08); }
+.action-create:active:not(:disabled) { filter: brightness(.92); }
+.action-create:focus-visible,
+.action-join button:focus-visible { outline: 2px solid #ffd2b8; outline-offset: -5px; }
+
+.action-join {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 0 0 28px;
+  background: rgba(14, 21, 27, .78);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: #5d6c74;
+  transition: box-shadow .25s, color .25s;
+}
+.action-join > .ic { width: 34px; height: 34px; }
+.action-join:focus-within { box-shadow: inset 0 0 0 2px var(--orange); color: var(--orange-light); }
+.action-join input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: #f4f3ee;
+  font: 800 clamp(32px, 4.4vw, 52px)/1 'Barlow Condensed', sans-serif;
+  letter-spacing: .32em;
+  text-transform: uppercase;
+}
+.action-join input::placeholder { color: #323f47; }
+.action-join input:focus { box-shadow: none; }
+.action-join button {
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  width: clamp(72px, 9vw, 104px);
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: rgba(240, 120, 69, .14);
+  color: var(--orange-light);
+  font-size: 32px;
+  box-shadow: none;
+}
+.action-join button:hover:not(:disabled) {
+  background: var(--orange);
+  color: #fff;
+  border-color: var(--orange);
+  box-shadow: none;
+  transform: none;
+}
+/* Le bouton s'éteint tant qu'aucun code n'est saisi */
+.action-join:has(input:placeholder-shown) button { opacity: .4; }
+
+/* Statut : visible uniquement quand il a quelque chose à dire */
+#menu-status { margin: 0; min-height: 0; }
+#menu-status:empty { display: none; }
+
+/* ---------- Amis connectés : bandeau en bas ---------- */
+.play-friends {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 16px 0 0;
+  border: 0;
+  border-top: 1px solid rgba(173, 190, 200, .15);
+  background: none;
+  box-shadow: none;
+}
+.play-friends.live { border-color: rgba(240, 120, 69, .55); box-shadow: none; }
+.pf-head { flex: none; margin: 0; gap: 10px; color: #77858b; }
+.pf-head > .ic { width: 20px; height: 20px; }
+.pf-count { margin-left: 0; }
+.pf-add {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-color: var(--border);
+  background: none;
+  color: #9caab2;
+  font-size: 17px;
+}
+.pf-add:hover:not(:disabled) { background: rgba(240, 120, 69, .14); border-color: var(--orange); color: var(--orange-light); box-shadow: none; transform: none; }
+
+.play-friends.empty #friends-play { display: none; }
+#friends-play { flex: 1; min-width: 0; }
+#friends-play .fr-list {
+  display: flex;
+  gap: 8px;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+}
+#friends-play .fr-row { flex: none; }
+
+/* ---------- Vue Amis : plus d'introduction, panneau centré ---------- */
+.menu-view.active[data-view="friends"] { justify-content: center; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 760px) {
+  .actions { grid-template-columns: 1fr; }
+  .action-create, .action-join { height: 84px; }
+  .play-friends { flex-direction: column; align-items: stretch; gap: 12px; }
+}
+@media (max-width: 700px) {
+  .menu-tab { padding: 0 4px; font-size: 22px; }
+  .menu-tab .tab-label { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .menu-tab .tab-label, .action-create .ic { transition: none; }
+}

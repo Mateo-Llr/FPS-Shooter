@@ -5,7 +5,7 @@ export const MSG = Object.freeze({
   HELLO: 'hello', READY: 'ready', START: 'start', INPUT: 'input',
   STATE: 'state', EVENT: 'event', PING: 'ping', PONG: 'pong',
   GAMEOVER: 'gameover', RECONNECT: 'reconnect', ROSTER: 'roster', REPLAY: 'replay',
-  KICK: 'kick'
+  KICK: 'kick', CHAT: 'chat'
 });
 
 export function validMessage(message) {
