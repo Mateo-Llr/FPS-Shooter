@@ -1,6 +1,19 @@
 
 export const APPEARANCE_KEY = 'clash.appearance.v1';
 
+/** Évènement émis (sur window) à chaque sauvegarde de l'apparence : les menus ouverts se resynchronisent. */
+export const APPEARANCE_EVENT = 'clash:appearance-changed';
+/** Évènement à écouter côté application pour ouvrir l'onglet Boutique (detail.id = objet visé). */
+export const OPEN_SHOP_EVENT = 'clash:open-shop';
+
+/** Raretés (déduites du prix, sauf `rarity` explicite sur l'objet). */
+export const RARITIES = {
+  common: { label: 'Commun', color: '#9aa7b4' },
+  rare: { label: 'Rare', color: '#4aa3ff' },
+  epic: { label: 'Épique', color: '#b46bff' },
+  legendary: { label: 'Légendaire', color: '#ffb02e' }
+};
+
 /**
  * Catalogue des cosmétiques.
  * Les IDs correspondent exactement à accessoryModel() dans character.js.
@@ -63,6 +76,62 @@ export const COSMETIC_ITEMS = [
     description: 'Un peu de magie dans ton équipement.',
     category: 'Chapeaux'
   },
+  {
+    id: 'cowboy_hat',
+    label: 'Chapeau de cowboy',
+    price: 200,
+    icon: '🤠',
+    description: 'Le shérif de la partie.',
+    category: 'Chapeaux'
+  },
+  {
+    id: 'pirate_hat',
+    label: 'Tricorne de pirate',
+    price: 320,
+    icon: '🏴‍☠️',
+    description: 'Cap sur le butin, moussaillon !',
+    category: 'Chapeaux'
+  },
+  {
+    id: 'chef_hat',
+    label: 'Toque de chef',
+    price: 140,
+    icon: '👨‍🍳',
+    description: 'Ça sent le roussi en cuisine.',
+    category: 'Chapeaux'
+  },
+  {
+    id: 'party_hat',
+    label: 'Chapeau de fête',
+    price: 90,
+    icon: '🎉',
+    description: 'C’est toujours l’anniversaire de quelqu’un.',
+    category: 'Chapeaux'
+  },
+  {
+    id: 'santa_hat',
+    label: 'Bonnet de Noël',
+    price: 160,
+    icon: '🎅',
+    description: 'Ho ho ho, tout le monde à terre.',
+    category: 'Chapeaux'
+  },
+  {
+    id: 'beret',
+    label: 'Béret',
+    price: 110,
+    icon: '🎨',
+    description: 'Un air d’artiste, baguette non fournie.',
+    category: 'Chapeaux'
+  },
+  {
+    id: 'propeller_cap',
+    label: 'Casquette à hélice',
+    price: 170,
+    icon: '🚁',
+    description: 'Décollage immédiat.',
+    category: 'Chapeaux'
+  },
 
   // BANDEAUX
   {
@@ -113,6 +182,30 @@ export const COSMETIC_ITEMS = [
     price: 200,
     icon: '🧐',
     description: 'Une touche de sophistication.',
+    category: 'Lunettes'
+  },
+  {
+    id: 'pilot_goggles',
+    label: 'Lunettes d’aviateur',
+    price: 190,
+    icon: '🥽',
+    description: 'Prêt à piquer dans la mêlée.',
+    category: 'Lunettes'
+  },
+  {
+    id: 'cyber_visor',
+    label: 'Visière cyber',
+    price: 360,
+    icon: '🔷',
+    description: 'Un affichage tête haute venu du futur.',
+    category: 'Lunettes'
+  },
+  {
+    id: 'eyepatch',
+    label: 'Cache-œil',
+    price: 110,
+    icon: '🏴',
+    description: 'Un seul œil, mais il ne rate rien.',
     category: 'Lunettes'
   },
 
@@ -175,6 +268,64 @@ export const COSMETIC_ITEMS = [
     description: 'Prêt pour une mission intergalactique.',
     category: 'Équipements'
   },
+  {
+    id: 'viking_helmet',
+    label: 'Casque viking',
+    price: 280,
+    icon: '⚔️',
+    description: 'Pour entrer au Valhalla avec style.',
+    category: 'Équipements'
+  },
+  {
+    id: 'knight_helmet',
+    label: 'Heaume de chevalier',
+    price: 420,
+    icon: '🛡️',
+    description: 'Une protection digne d’un roi.',
+    category: 'Équipements'
+  },
+  {
+    id: 'hardhat',
+    label: 'Casque de chantier',
+    price: 130,
+    icon: '👷',
+    description: 'La sécurité avant tout.',
+    category: 'Équipements'
+  },
+  {
+    id: 'gaming_headset',
+    label: 'Casque gamer',
+    price: 240,
+    icon: '🎮',
+    description: 'Micro ouvert, esprit d’équipe fermé.',
+    category: 'Équipements'
+  },
+
+  // VISAGE
+  {
+    id: 'mustache',
+    label: 'Moustache',
+    price: 90,
+    icon: '🥸',
+    description: 'Une moustache soignée, à la française.',
+    category: 'Visage'
+  },
+  {
+    id: 'beard',
+    label: 'Barbe',
+    price: 170,
+    icon: '🧔',
+    description: 'Une barbe fournie qui impose le respect.',
+    category: 'Visage'
+  },
+  {
+    id: 'clown_nose',
+    label: 'Nez de clown',
+    price: 70,
+    icon: '🤡',
+    description: 'Impossible de te prendre au sérieux.',
+    category: 'Visage'
+  },
 
   // FANTAISIE
   {
@@ -234,6 +385,38 @@ export const COSMETIC_ITEMS = [
     category: 'Fantaisie'
   },
   {
+    id: 'unicorn_horn',
+    label: 'Corne de licorne',
+    price: 380,
+    icon: '🦄',
+    description: 'Un souffle de magie sur le champ de bataille.',
+    category: 'Fantaisie'
+  },
+  {
+    id: 'bear_ears',
+    label: 'Oreilles d’ours',
+    price: 150,
+    icon: '🐻',
+    description: 'Câlins non garantis.',
+    category: 'Fantaisie'
+  },
+  {
+    id: 'alien_antennae',
+    label: 'Antennes d’alien',
+    price: 230,
+    icon: '👽',
+    description: 'Prends-moi pour un extraterrestre.',
+    category: 'Fantaisie'
+  },
+  {
+    id: 'laurel',
+    label: 'Couronne de laurier',
+    price: 460,
+    icon: '🏛️',
+    description: 'Réservé aux champions.',
+    category: 'Fantaisie'
+  },
+  {
     id: 'earrings',
     label: 'Boucles d’oreilles',
     price: 150,
@@ -248,8 +431,38 @@ export const COSMETIC_ITEMS = [
     icon: '✨',
     description: 'Un petit détail métallique.',
     category: 'Bijoux'
+  },
+  {
+    id: 'nose_ring',
+    label: 'Anneau de nez',
+    price: 120,
+    icon: '💍',
+    description: 'Un anneau doré discret.',
+    category: 'Bijoux'
   }
 ];
+
+/** Ordre et pictogramme des catégories de cosmétiques. */
+export const COSMETIC_CATEGORIES = [
+  { id: 'Chapeaux', icon: '🎩' },
+  { id: 'Bandeaux', icon: '🏴' },
+  { id: 'Lunettes', icon: '🕶️' },
+  { id: 'Visage', icon: '🥸' },
+  { id: 'Masques', icon: '😷' },
+  { id: 'Équipements', icon: '🪖' },
+  { id: 'Fantaisie', icon: '✨' },
+  { id: 'Bijoux', icon: '💎' }
+];
+
+/** Clé de rareté d'un objet : `rarity` explicite, sinon selon le prix. */
+export function getRarity(item) {
+  if (item?.rarity && RARITIES[item.rarity]) return item.rarity;
+  const price = item?.price ?? 0;
+  if (price >= 400) return 'legendary';
+  if (price >= 250) return 'epic';
+  if (price >= 150) return 'rare';
+  return 'common';
+}
 
 /**
  * OPTIONS DE PERSONNALISATION
@@ -411,6 +624,10 @@ export function saveAppearance(appearance) {
     // Apparence conservée pendant la session.
   }
 
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(APPEARANCE_EVENT, { detail: normalized }));
+  }
+
   return normalized;
 }
 
@@ -432,5 +649,7 @@ export function getCosmeticsByCategory(category) {
  * Liste des catégories disponibles.
  */
 export function getCosmeticCategories() {
-  return [...new Set(COSMETIC_ITEMS.map(item => item.category))];
+  const present = new Set(COSMETIC_ITEMS.map(item => item.category));
+  const ordered = COSMETIC_CATEGORIES.map(category => category.id).filter(id => present.has(id));
+  return [...ordered, ...[...present].filter(id => !ordered.includes(id))];
 }

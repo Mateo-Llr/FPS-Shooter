@@ -11,6 +11,7 @@ import { normalizeAppearance } from './customization.js';
 import { GAMEPAD_BUTTONS, GamepadState } from './gamepad.js';
 import { progress } from './progress.js';
 import { BotManager } from './bots.js';
+import { MAX_TEAMS, teamInfo, shirtFor, clampTeamCount } from './teams.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -108,6 +109,12 @@ radial-gradient(circle at center,transparent 0,transparent 31vmin,#000 31.3vmin)
 .sb-title{font:900 58px/1 'Barlow Condensed',Arial,sans-serif;letter-spacing:.16em}
 .sb-title.win{color:#7fe08a}.sb-title.lose{color:#ff5a4a}.sb-title.draw{color:#ffc46b}.sb-title.info{color:#eef1f2}
 .sb-sub{font:700 15px 'Barlow Condensed',Arial,sans-serif;letter-spacing:.2em;color:#9caab2;margin:6px 0 20px}
+.sb-teams{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:-6px 0 18px}
+.sb-team{display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border:1px solid #394952;font:700 16px 'Barlow Condensed',Arial,sans-serif;letter-spacing:.08em;color:#dfe5e8}
+.sb-team i,.tdot{width:10px;height:10px;border-radius:50%;background:var(--team)}
+.sb-team b{color:var(--team);font-weight:800}
+.sb-team.win{border-color:var(--team);background:rgba(255,255,255,.05)}
+.tdot{display:inline-block;margin-right:10px;vertical-align:middle}
 .sb-panel table{width:100%;border-collapse:collapse;font:700 20px 'Barlow Condensed',Arial,sans-serif}
 .sb-panel th{font-size:12px;letter-spacing:.18em;color:#8a98a0;padding:6px 10px;text-align:center;border-bottom:1px solid #46545b}
 .sb-panel td{padding:12px 10px;text-align:center;border-bottom:1px solid #2a363d;font-variant-numeric:tabular-nums}
@@ -175,6 +182,9 @@ export class Game {
     this.ids = [];            // ids des joueurs encore présents
     this.roster = [];         // ids de tous les joueurs du début de partie (scoreboard)
     this.gone = new Set();    // ids des joueurs partis
+    this.teamMode = false;    // partie par équipes ?
+    this.teamOf = [];         // teamOf[id] = index d'équipe (-1 si absent)
+    this.teamCount = 0;
     this.remotes = new Map(); // id -> { id, ch, r (affiché), n (réseau), ... }
 
     this.resetArrays();
@@ -229,7 +239,8 @@ export class Game {
     this.lastSpawn = arr(() => null);
     this.score = arr(() => 0);
     this.stats = arr(() => ({ d: 0, h: 0 }));
-    this.capture = arr(() => 0); // % de capture du drapeau, propre à chaque joueur
+    this.capture = arr(() => 0); // % de capture du drapeau, propre à chaque joueur (en équipes : copie de la valeur de l'équipe)
+    this.teamCap = Array.from({ length: MAX_TEAMS }, () => 0); // hôte : % de capture par équipe
     this.zone = -1;              // id du joueur seul sur le drapeau, -1 = vide, -2 = contesté
     this.bombHolder = -1;        // mode bombe : id du porteur
     this.bombNoTag = arr(() => 0); // hôte : fin de l'immunité de retouche (ms)
@@ -244,13 +255,50 @@ export class Game {
 
   nameOf(id) { return this.names[id] || 'Joueur'; }
 
+  // ============ ÉQUIPES ============
+  // En équipes : pas de tirs alliés (les balles traversent les coéquipiers), et scores, captures et
+  // victoires se calculent par équipe. `isEnemy(a, b)` est aussi destiné aux bots (choix de leurs cibles).
+
+  sameTeam(a, b) { return this.teamMode && a !== b && this.teamOf[a] >= 0 && this.teamOf[a] === this.teamOf[b]; }
+  isEnemy(a, b) { return a !== b && !this.sameTeam(a, b); }
+  teamName(t) { return teamInfo(t).name; }
+  teamLabel(t) { return `ÉQUIPE ${teamInfo(t).name.toUpperCase()}`; }
+  /** Équipes encore représentées parmi ces joueurs. */
+  liveTeams(ids = this.ids) { return [...new Set(ids.map(i => this.teamOf[i]))].filter(t => t >= 0); }
+  teamMembers(t) { return this.roster.filter(i => this.teamOf[i] === t); }
+  teamScore(t) { return this.teamMembers(t).reduce((s, i) => s + this.score[i], 0); }
+  teamCapture(t) { return Math.max(0, ...this.teamMembers(t).map(i => this.capture[i])); }
+  teamAlive(t) { return this.ids.filter(i => this.teamOf[i] === t && !this.out.includes(i)).length; }
+  noOpponent() { return this.teamMode ? this.liveTeams().length < 2 : this.ids.length < 2; }
+  isWinner(winner, winnerTeam) {
+    return this.teamMode ? winnerTeam >= 0 && winnerTeam === this.teamOf[this.me] : winner === this.me;
+  }
+  shirtColor(id) { return this.teamMode ? teamInfo(this.teamOf[id]).hex : shirtOf(id); }
+
+  /** Valeur de classement d'une équipe dans le mode courant. */
+  teamMetric(t) {
+    if (this.isBomb()) return this.teamAlive(t);
+    if (this.isFlag() || this.isCrown()) return this.teamCapture(t);
+    return this.teamScore(t);
+  }
+  teamCell(t) {
+    if (this.isBomb()) return `${this.teamAlive(t)} EN VIE`;
+    if (this.isCrown()) return `${Math.floor(this.teamCapture(t) * this.config.crownSeconds / 100)}s`;
+    if (this.isFlag()) return `${Math.floor(this.teamCapture(t))}%`;
+    return this.teamScore(t);
+  }
+  /** Copie la progression d'équipe sur chaque joueur : capture[] est diffusé tel quel aux invités. */
+  mirrorTeamCap() {
+    for (const i of this.roster) if (this.teamOf[i] >= 0) this.capture[i] = this.teamCap[this.teamOf[i]];
+  }
+
   // ============ CONSTRUCTION DE LA SCÈNE ============
 
   /** Crée le modèle 3D d'un adversaire (un par joueur distant). */
   addRemote(id, spawn) {
     const inputType = this.inputTypes[id] || 'keyboard';
     const ch = createCharacter({
-      shirt: SHIRT_COLORS[id % SHIRT_COLORS.length],
+      shirt: this.teamMode ? shirtFor(this.teamOf[id]) : SHIRT_COLORS[id % SHIRT_COLORS.length],
       label: this.nameOf(id),
       inputType,
       appearance: this.appearances[id]
@@ -411,7 +459,7 @@ export class Game {
       if (Array.isArray(d.stats)) this.stats = d.stats;
       if (Array.isArray(d.cap)) this.capture = d.cap;
       if (Array.isArray(d.out)) this.out = d.out.filter(Number.isInteger);
-      this.finish(d.reason || 'Fin de partie', '', d.winner ?? -1);
+      this.finish(d.reason || 'Fin de partie', '', d.winner ?? -1, Number.isInteger(d.winnerTeam) ? d.winnerTeam : -1);
     });
     // Tchat : l'invité envoie son texte à l'hôte, qui valide puis diffuse { author, text } à tous.
     n.on(MSG.CHAT, d => {
@@ -532,7 +580,7 @@ export class Game {
     this.dead[id] = true;
     this.pending[id] = null;
     this.emit({ kind: 'left', who: id });
-    if (this.ids.length < 2 && !this.over) {
+    if (this.noOpponent() && !this.over) {
       this.over = true;
       this.forfeit = true;
       this.endAt = performance.now() + 500;
@@ -578,6 +626,22 @@ export class Game {
     this.roster = this.ids.slice();
     this.gone = new Set();
 
+    // Équipes : valides si chaque joueur en a une et qu'au moins 2 sont représentées.
+    const tc = config.teams;
+    this.teamMode = false;
+    this.teamOf = Array.from({ length: MAX_PLAYERS }, () => -1);
+    this.teamCount = 0;
+    if (tc && Array.isArray(tc.of)) {
+      const count = clampTeamCount(tc.count);
+      const ok = this.ids.every(i => Number.isInteger(tc.of[i]) && tc.of[i] >= 0 && tc.of[i] < count);
+      if (ok && new Set(this.ids.map(i => tc.of[i])).size >= 2) {
+        this.teamMode = true;
+        this.teamCount = count;
+        for (const i of this.ids) this.teamOf[i] = tc.of[i];
+      }
+    }
+    this.config.teams = this.teamMode ? { count: this.teamCount, of: this.teamOf.slice() } : null;
+
     this.resetArrays();
     this.bombClock = this.config.bombSeconds;
     this.buildFlag();
@@ -602,8 +666,12 @@ export class Game {
     this.deathEl.style.display = 'none';
 
     // Spawns initiaux déterministes : tous les clients calculent la même chose.
+    // En équipes, les coéquipiers démarrent côte à côte.
+    const spawnOrder = this.teamMode
+      ? [...this.ids].sort((a, b) => this.teamOf[a] - this.teamOf[b] || a - b)
+      : this.ids;
     const spawnOf = id => {
-      const index = this.ids.indexOf(id);
+      const index = spawnOrder.indexOf(id);
       const spawnIndex = Math.floor(index * this.world.spawns.length / this.ids.length);
       return this.world.spawns[spawnIndex];
     };
@@ -638,9 +706,11 @@ export class Game {
 
     this.hud.show();
     this.hud.clearMessage();
-    if (this.isFlag()) this.hud.message(`Reste SEUL dans la zone ${this.config.flagSeconds} s (cumulées) pour capturer le drapeau. À plusieurs, plus personne ne progresse.`);
-    else if (this.isBomb()) this.hud.message('BOMBE : le porteur doit toucher un joueur AU COUTEAU pour lui passer la bombe, puis fuir. Quand le compteur tombe à zéro, le porteur explose !');
-    else if (this.isCrown()) this.hud.message(`COURONNE : prends-la au centre, puis tue le porteur pour la lui voler. Garde-la ${this.config.crownSeconds} s au total pour gagner.`);
+    if (this.isFlag()) this.hud.message(this.teamMode
+      ? `Votre équipe doit être SEULE dans la zone ${this.config.flagSeconds} s (cumulées) pour capturer le drapeau. Si deux équipes s’y trouvent, plus personne ne progresse.`
+      : `Reste SEUL dans la zone ${this.config.flagSeconds} s (cumulées) pour capturer le drapeau. À plusieurs, plus personne ne progresse.`);
+    else if (this.isBomb()) this.hud.message(`BOMBE : le porteur doit toucher un ${this.teamMode ? 'adversaire' : 'joueur'} AU COUTEAU pour lui passer la bombe, puis fuir. Quand le compteur tombe à zéro, le porteur explose !${this.teamMode ? ' Une équipe est éliminée quand tous ses membres ont explosé.' : ''}`);
+    else if (this.isCrown()) this.hud.message(`COURONNE : prends-la au centre, puis tue le porteur pour la lui voler. ${this.teamMode ? `Le temps de toute l’équipe se cumule : ${this.config.crownSeconds} s pour gagner.` : `Garde-la ${this.config.crownSeconds} s au total pour gagner.`}`);
     document.querySelector('#lock-hint')?.classList.remove('hidden');
     this.crosshair.style.display = 'block';
     this.active = true;
@@ -649,6 +719,7 @@ export class Game {
     this.chat.setActive(true);
     progress.startMatch();
     this.updateHUD();
+    if (this.teamMode) this.banner(this.teamLabel(this.teamOf[this.me]), 'TES ALLIÉS PORTENT TA COULEUR · PAS DE TIRS ALLIÉS');
   }
 
   bindKeys() {
@@ -895,7 +966,7 @@ export class Game {
     const rewind = (shooter === this.me || this.bots.has(shooter)) ? 0 : clampN(((this.rtt.get(shooter) || 0) + VIEW_DELAY * 1000), 0, MAX_REWIND * 1000);
     const targets = [];
     for (const v of this.ids) {
-      if (v === shooter || this.dead[v] || this.invuln[v] > now) continue;
+      if (v === shooter || this.dead[v] || this.invuln[v] > now || this.sameTeam(shooter, v)) continue;
       if (this.isBomb() && this.bombNoTag[v] > now) continue;
       let p;
       if (shooter === this.me) {
@@ -1020,7 +1091,8 @@ export class Game {
     // Mode couronne : tuer le porteur lui prend la couronne.
     if (this.isCrown() && this.crownHolder === victim && !this.over) this.setCrown(killer, victim);
 
-    if (this.isDeathmatch() && this.config.mode === 'kills' && this.score[killer] >= this.config.target && !this.over) {
+    const total = this.teamMode ? this.teamScore(this.teamOf[killer]) : this.score[killer];
+    if (this.isDeathmatch() && this.config.mode === 'kills' && total >= this.config.target && !this.over) {
       this.over = true;
       this.endAt = performance.now() + 2800;
     }
@@ -1060,7 +1132,35 @@ export class Game {
     }
   }
 
+  /** Verdict par équipes : winnerTeam = équipe gagnante (-1 = égalité), winner reste à -1. */
+  teamVerdict() {
+    const none = reason => ({ reason, winner: -1, winnerTeam: -1 });
+    const win = (t, reason) => ({ reason, winner: -1, winnerTeam: t });
+    const label = t => `Équipe ${this.teamName(t)}`;
+    if (this.forfeit) {
+      const t = this.liveTeams()[0];
+      return t >= 0 ? win(t, 'Victoire par forfait') : none('Égalité');
+    }
+    if (this.isBomb()) {
+      const alive = this.liveTeams(this.alive());
+      return alive.length === 1 ? win(alive[0], `${label(alive[0])} a survécu à la bombe`) : none('Égalité');
+    }
+    const teams = [...new Set(this.roster.map(i => this.teamOf[i]))];
+    const best = Math.max(...teams.map(t => this.teamMetric(t)));
+    const first = teams.filter(t => this.teamMetric(t) === best);
+    if (this.isFlag() || this.isCrown()) {
+      if (best <= 0 || first.length > 1) return none('Égalité');
+      const t = first[0];
+      if (best >= 100) return win(t, this.isCrown() ? `${label(t)} règne sur l'arène` : `${label(t)} a capturé le drapeau`);
+      const detail = this.isCrown() ? `${Math.floor(best * this.config.crownSeconds / 100)} s` : `${Math.floor(best)} % de capture`;
+      return win(t, `Victoire de ${label(t)} (${detail})`);
+    }
+    if (first.length > 1) return none('Égalité');
+    return win(first[0], `Victoire de ${label(first[0])}`);
+  }
+
   verdict() {
+    if (this.teamMode) return this.teamVerdict();
     if (this.forfeit) {
       const winner = this.isBomb() ? (this.alive()[0] ?? this.ids[0]) : this.ids[0];
       return { reason: 'Victoire par forfait', winner: winner ?? this.me };
@@ -1363,6 +1463,20 @@ export class Game {
    */
   flagTick(dt, now) {
     const inside = this.ids.filter(i => !this.dead[i] && this.inZone(this.posOf(i)));
+    if (this.teamMode) {
+      // Une équipe contrôle la zone si elle est la seule représentée ; plusieurs coéquipiers y progressent ensemble.
+      const teams = new Set(inside.map(i => this.teamOf[i]));
+      this.zone = teams.size === 1 ? inside[0] : teams.size ? -2 : -1;
+      if (this.zone < 0) return;
+      const t = this.teamOf[this.zone];
+      this.teamCap[t] = Math.min(100, this.teamCap[t] + dt / this.flag.seconds * 100);
+      this.mirrorTeamCap();
+      if (this.teamCap[t] >= 100) {
+        this.over = true;
+        this.endAt = now + 2000;
+      }
+      return;
+    }
     this.zone = inside.length === 1 ? inside[0] : inside.length ? -2 : -1;
     if (this.zone < 0) return;
     const id = this.zone;
@@ -1430,11 +1544,11 @@ export class Game {
     f.k = lerp(f.k, focus >= 0 ? this.capture[focus] / 100 : 0, Math.min(1, dt * 6));
     f.cloth.position.y = 0.7 + f.k * 2.9;
     f.cloth.rotation.y = Math.sin(f.t * 3) * 0.18;
-    f.cloth.material.color.set(focus >= 0 ? shirtOf(focus) : 0xcfc9b8);
+    f.cloth.material.color.set(focus >= 0 ? this.shirtColor(focus) : 0xcfc9b8);
 
     let ringColor = 0xcfc9b8, ringOpacity = 0.45;
     if (this.zone === -2) { ringColor = 0xff3b30; ringOpacity = 0.55 + Math.sin(f.t * 8) * 0.2; }
-    else if (this.zone >= 0) { ringColor = shirtOf(this.zone); ringOpacity = 0.8; }
+    else if (this.zone >= 0) { ringColor = this.shirtColor(this.zone); ringOpacity = 0.8; }
     f.ring.material.color.set(ringColor);
     f.ring.material.opacity = ringOpacity;
     f.disc.material.color.set(ringColor);
@@ -1450,41 +1564,53 @@ export class Game {
     if (!special) return;
 
     const me = this.me, nm = i => this.nameOf(i).toUpperCase();
+    const team = this.teamMode, myT = team ? this.teamOf[me] : -1;
+    // Meilleur adversaire (en équipes : on ignore les coéquipiers).
     let lead = -1;
     for (const i of this.ids) {
-      if (i !== me && (lead < 0 || this.capture[i] > this.capture[lead])) lead = i;
+      if (i === me || (team && this.teamOf[i] === myT)) continue;
+      if (lead < 0 || this.capture[i] > this.capture[lead]) lead = i;
     }
+    const who = i => team ? this.teamLabel(this.teamOf[i]) : nm(i);
+    const mineLabel = team ? 'ÉQUIPE' : 'TOI';
     let text = '', pct = 0, left = '', right = '', mine = false, contested = false, danger = false;
 
     if (mode === 'flag') {
       const z = this.zone;
-      text = 'REJOINS LE DRAPEAU AU CENTRE';
-      if (z === me) text = 'TU CAPTURES LE DRAPEAU';
-      else if (z >= 0) text = `${nm(z)} CAPTURE LE DRAPEAU`;
+      const ours = z >= 0 && (team ? this.teamOf[z] === myT : z === me);
+      text = team ? 'REJOIGNEZ LE DRAPEAU AU CENTRE' : 'REJOINS LE DRAPEAU AU CENTRE';
+      if (ours) text = team ? 'TON ÉQUIPE CAPTURE LE DRAPEAU' : 'TU CAPTURES LE DRAPEAU';
+      else if (z >= 0) text = `${who(z)} CAPTURE LE DRAPEAU`;
       else if (z === -2) text = 'ZONE CONTESTÉE · PROGRESSION BLOQUÉE';
-      mine = z === me;
+      mine = ours;
       contested = z === -2;
       pct = this.capture[me];
-      left = `TOI · ${Math.floor(this.capture[me])} %`;
-      right = lead >= 0 ? `${nm(lead)} · ${Math.floor(this.capture[lead])} %` : '';
+      left = `${mineLabel} · ${Math.floor(this.capture[me])} %`;
+      right = lead >= 0 ? `${who(lead)} · ${Math.floor(this.capture[lead])} %` : '';
     } else if (mode === 'bomb') {
       const h = this.bombHolder, t = Math.max(0, this.clockValue);
-      if (h === me) text = 'TU PORTES LA BOMBE · TOUCHE UN JOUEUR AU COUTEAU !';
+      if (h === me) text = team ? 'TU PORTES LA BOMBE · TOUCHE UN ADVERSAIRE AU COUTEAU !' : 'TU PORTES LA BOMBE · TOUCHE UN JOUEUR AU COUTEAU !';
+      else if (h >= 0 && team && this.teamOf[h] === myT) text = `${nm(h)} (ALLIÉ) PORTE LA BOMBE`;
       else if (h >= 0) text = `${nm(h)} PORTE LA BOMBE · FUIS !`;
       else text = 'LA BOMBE SE PRÉPARE…';
       danger = h === me;
       pct = t / this.config.bombSeconds * 100;
       left = `EXPLOSION DANS ${Math.ceil(t)} S`;
-      right = `${this.alive().length} EN VIE`;
+      if (team) {
+        const n = this.liveTeams(this.alive()).length;
+        right = `${n} ÉQUIPE${n > 1 ? 'S' : ''} EN VIE`;
+      } else right = `${this.alive().length} EN VIE`;
     } else {
       const h = this.crownHolder;
+      const ours = h >= 0 && (team ? this.teamOf[h] === myT : h === me);
       if (h === me) text = 'TU PORTES LA COURONNE · TIENS BON !';
+      else if (ours) text = `${nm(h)} PORTE LA COURONNE · PROTÈGE-LE !`;
       else if (h >= 0) text = `${nm(h)} PORTE LA COURONNE · TUE-LE !`;
       else text = 'PRENDS LA COURONNE AU CENTRE';
-      mine = h === me;
+      mine = ours;
       pct = this.capture[me];
-      left = `TOI · ${this.secondsOf(me)} / ${this.config.crownSeconds} S`;
-      right = lead >= 0 ? `${nm(lead)} · ${this.secondsOf(lead)} S` : '';
+      left = `${mineLabel} · ${this.secondsOf(me)} / ${this.config.crownSeconds} S`;
+      right = lead >= 0 ? `${who(lead)} · ${this.secondsOf(lead)} S` : '';
     }
 
     el.classList.toggle('mine', mine);
@@ -1513,6 +1639,11 @@ export class Game {
   }
 
   modeLabel() {
+    const label = this.baseModeLabel();
+    return this.teamMode ? `ÉQUIPES · ${label}` : label;
+  }
+
+  baseModeLabel() {
     const c = this.config;
     if (this.isFlag()) return `CAPTURE DU DRAPEAU · ${c.flagSeconds} S`;
     if (this.isBomb()) return `BOMBE · ${c.bombSeconds} S PAR MANCHE`;
@@ -1559,7 +1690,7 @@ export class Game {
   /** Hôte : compte à rebours partagé ; à zéro le porteur explose et une nouvelle manche commence. */
   bombTick(dt, now) {
     const alive = this.alive();
-    if (alive.length <= 1) {
+    if (this.bombDone(alive)) {
       this.over = true;
       this.endAt = now + 1500;
       return;
@@ -1568,6 +1699,11 @@ export class Game {
     this.bombClock -= dt;
     this.clockValue = Math.max(0, this.bombClock);
     if (this.bombClock <= 0) this.bombExplode(now);
+  }
+
+  /** Manche terminée : un seul joueur en vie, ou en équipes une seule équipe en vie. */
+  bombDone(alive) {
+    return this.teamMode ? this.liveTeams(alive).length <= 1 : alive.length <= 1;
   }
 
   bombPickHolder(alive = this.alive(), from = -1) {
@@ -1591,7 +1727,7 @@ export class Game {
     this.emit({ kind: 'explode', who, x: p.x, y: p.y || 0, z: p.z, out: this.out.slice() });
 
     const alive = this.alive();
-    if (alive.length <= 1) {
+    if (this.bombDone(alive)) {
       this.over = true;
       this.endAt = now + 2500;
       return;
@@ -1715,6 +1851,16 @@ export class Game {
     }
 
     const h = this.crownHolder;
+    if (this.teamMode) {
+      const t = this.teamOf[h];
+      this.teamCap[t] = Math.min(100, this.teamCap[t] + dt / this.config.crownSeconds * 100);
+      this.mirrorTeamCap();
+      if (this.teamCap[t] >= 100) {
+        this.over = true;
+        this.endAt = now + 2000;
+      }
+      return;
+    }
     this.capture[h] = Math.min(100, this.capture[h] + dt / this.config.crownSeconds * 100);
     if (this.capture[h] >= 100) {
       this.over = true;
@@ -1801,38 +1947,54 @@ export class Game {
 
   updateHUD() {
     const w = this.weapon.stats();
-    // À droite du HUD : le meilleur adversaire du moment.
-    const metric = i => this.modeMetric(i);
-    const show = i => this.modeCell(i);
-    let best = null;
-    for (const i of this.ids) {
-      if (i === this.me) continue;
-      if (best === null || metric(i) > metric(best)) best = i;
+    let youScore, enemyScore, youName, enemyName;
+    if (this.teamMode) {
+      // En équipes : mon équipe contre la meilleure équipe adverse.
+      const mine = this.teamOf[this.me];
+      let best = -1;
+      for (const t of this.liveTeams()) {
+        if (t !== mine && (best < 0 || this.teamMetric(t) > this.teamMetric(best))) best = t;
+      }
+      youScore = this.teamCell(mine);
+      youName = this.teamLabel(mine);
+      enemyScore = best < 0 ? 0 : this.teamCell(best);
+      enemyName = best < 0 ? '—' : this.teamLabel(best);
+    } else {
+      // À droite du HUD : le meilleur adversaire du moment.
+      let best = null;
+      for (const i of this.ids) {
+        if (i === this.me) continue;
+        if (best === null || this.modeMetric(i) > this.modeMetric(best)) best = i;
+      }
+      youScore = this.modeCell(this.me);
+      youName = this.nameOf(this.me);
+      enemyScore = best === null ? 0 : this.modeCell(best);
+      enemyName = best === null ? '—' : this.nameOf(best);
     }
     this.updateModeHUD();
     this.hud.update({
       health: this.hp[this.me],
-      youScore: show(this.me),
-      enemyScore: best === null ? 0 : show(best),
+      youScore,
+      enemyScore,
       time: this.clockValue,
       weapon: { label: w.label + (this.weapon.isReloading() ? ' · RECHARGE…' : '') },
       ammo: this.weapon.getAmmo(),
-      youName: this.nameOf(this.me),
-      enemyName: best === null ? '—' : this.nameOf(best)
+      youName,
+      enemyName
     });
   }
 
   end(v) {
     this.active = false;
     this.controller.enabled = false;
-    this.network.send(MSG.GAMEOVER, { reason: v.reason, winner: v.winner, score: this.score, stats: this.stats, cap: this.capture, out: this.out });
-    this.finish(v.reason, '', v.winner);
+    this.network.send(MSG.GAMEOVER, { reason: v.reason, winner: v.winner, winnerTeam: v.winnerTeam ?? -1, score: this.score, stats: this.stats, cap: this.capture, out: this.out });
+    this.finish(v.reason, '', v.winner, v.winnerTeam ?? -1);
   }
 
-  finish(reason, title = '', winner = -1) {
+  finish(reason, title = '', winner = -1, winnerTeam = -1) {
     if (this.finalShown) return;
     progress.endMatch({
-      won: winner === this.me,
+      won: this.isWinner(winner, winnerTeam),
       players: this.roster.length || this.ids.length,
       mode: this.config?.mode || 'kills',
       aborted: false
@@ -1850,42 +2012,55 @@ export class Game {
     this.crosshair.style.display = 'none';
     this.hud.clearMessage();
     this.finalShown = true;
-    this.showScoreboard(true, reason, title, winner);
+    this.showScoreboard(true, reason, title, winner, winnerTeam);
     if (this.onFinish?.() === false) this.updateReplayState([], false);
   }
 
   // ============ SCOREBOARD ============
 
-  showScoreboard(final = false, reason = '', title = '', winner = -1) {
+  showScoreboard(final = false, reason = '', title = '', winner = -1, winnerTeam = -1) {
     const me = this.me;
     const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const flag = !this.isDeathmatch();
     const metric = i => this.modeMetric(i);
-    const order = this.roster.slice().sort((a, b) => metric(b) - metric(a) || this.score[b] - this.score[a] || this.stats[a].d - this.stats[b].d);
+    const tm = this.teamMode;
+    const order = this.roster.slice().sort((a, b) => (tm
+      ? this.teamMetric(this.teamOf[b]) - this.teamMetric(this.teamOf[a]) || this.teamOf[a] - this.teamOf[b]
+      : 0) || metric(b) - metric(a) || this.score[b] - this.score[a] || this.stats[a].d - this.stats[b].d);
     const top = order.length ? metric(order[0]) : 0;
     const uniqueTop = order.filter(i => metric(i) === top).length === 1;
 
     let label = 'SCOREBOARD', cls = 'info';
     if (final) {
       if (title) { label = title; cls = 'lose'; }
-      else if (winner === me) { label = 'VICTOIRE'; cls = 'win'; }
-      else if (winner === -1) { label = 'ÉGALITÉ'; cls = 'draw'; }
+      else if (this.isWinner(winner, winnerTeam)) { label = 'VICTOIRE'; cls = 'win'; }
+      else if (tm ? winnerTeam === -1 : winner === -1) { label = 'ÉGALITÉ'; cls = 'draw'; }
       else { label = 'DÉFAITE'; cls = 'lose'; }
     }
 
     const rows = order.map((i, r) => {
       const d = this.stats[i].d, k = this.score[i];
-      const classes = [i === me ? 'me' : '', r === 0 && uniqueTop ? 'top' : '', this.gone.has(i) ? 'gone' : ''].join(' ').trim();
+      const classes = [i === me ? 'me' : '', (tm ? final && winnerTeam >= 0 && this.teamOf[i] === winnerTeam : r === 0 && uniqueTop) ? 'top' : '', this.gone.has(i) ? 'gone' : ''].join(' ').trim();
       return `<tr class="${classes}"><td>${r + 1}</td>` +
-        `<td>${esc(this.nameOf(i))}${i === 0 ? '<em>HÔTE</em>' : ''}${this.gone.has(i) ? '<em class="gone">PARTI</em>' : ''}</td>` +
+        `<td>${tm ? `<i class="tdot" style="background:${teamInfo(this.teamOf[i]).css}"></i>` : ''}${esc(this.nameOf(i))}${i === 0 ? '<em>HÔTE</em>' : ''}${this.gone.has(i) ? '<em class="gone">PARTI</em>' : ''}</td>` +
         (flag ? `<td>${this.modeCell(i)}</td>` : '') +
         `<td>${k}</td><td>${d}</td><td>${(d ? k / d : k).toFixed(2)}</td><td>${this.stats[i].h}</td></tr>`;
     }).join('');
 
-    const mode = flag ? this.modeLabel() : this.config?.mode === 'time' ? 'MEILLEUR SCORE AU TEMPS' : `PREMIER À ${this.config?.target}`;
+    const modeBase = flag ? this.modeLabel() : this.config?.mode === 'time' ? 'MEILLEUR SCORE AU TEMPS' : `PREMIER À ${this.config?.target}`;
+    const mode = tm && !flag ? `ÉQUIPES · ${modeBase}` : modeBase;
+    let teamBar = '';
+    if (tm) {
+      const teams = [...new Set(this.roster.map(i => this.teamOf[i]))]
+        .sort((a, b) => this.teamMetric(b) - this.teamMetric(a) || a - b);
+      teamBar = `<div class="sb-teams">${teams.map(t =>
+        `<span class="sb-team${final && t === winnerTeam ? ' win' : ''}" style="--team:${teamInfo(t).css}"><i></i>${esc(teamInfo(t).name)}<b>${this.teamCell(t)}</b></span>`
+      ).join('')}</div>`;
+    }
     this.sbEl.innerHTML = `<div class="sb-panel${order.length > 8 ? ' compact' : ''}">
       <div class="sb-title ${cls}">${esc(label)}</div>
       <div class="sb-sub">${esc(final ? reason : mode)}</div>
+      ${teamBar}
       <div class="sb-scroll"><table><thead><tr><th>#</th><th>JOUEUR</th>${flag ? `<th>${this.modeColumn()}</th>` : ''}<th>ÉLIMS</th><th>MORTS</th><th>K/D</th><th>TÊTES</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${final ? `<div id="sb-replay-status" class="sb-hint"></div>
         <div class="sb-actions">
@@ -1920,15 +2095,20 @@ export class Game {
     if (cancel) cancel.hidden = !available || !hasVoted;
     // Avec des bots, l'hôte peut relancer seul.
     const guestReady = [...this.replayVotes].some(id => id !== 0) || !!this.config?.bots?.length;
+    // En équipes, les joueurs prêts + les bots doivent couvrir au moins 2 équipes.
+    const ready = new Set([...this.replayVotes, ...(this.config?.bots || []).map(b => b.id)]);
+    const teamsOk = !this.teamMode || new Set([...ready].map(i => this.teamOf[i]).filter(t => t >= 0)).size >= 2;
     if (confirm) {
       confirm.hidden = !available || !hasVoted;
-      confirm.disabled = !guestReady;
+      confirm.disabled = !guestReady || !teamsOk;
       confirm.onclick = () => this.onReplayConfirm?.();
     }
     status.textContent = !available
       ? 'La reconnexion au salon est nécessaire pour rejouer.'
       : this.network.isHost && !guestReady
         ? 'Clique sur REJOUER, puis attends qu’un autre joueur soit prêt.'
+        : this.network.isHost && !teamsOk
+          ? 'Il faut des joueurs prêts dans au moins 2 équipes.'
         : `${this.replayVotes.size} joueur${this.replayVotes.size > 1 ? 's' : ''} prêt${this.replayVotes.size > 1 ? 's' : ''} à rejouer.`;
   }
 

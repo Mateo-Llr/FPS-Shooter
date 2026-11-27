@@ -114,18 +114,47 @@ export function gunModel(t) {
 
 
 /**
- * Collection de cosmétiques 3D.
- * Toutes les coordonnées sont exprimées dans head-model.
- * Le personnage regarde vers -Z.
+ * Hauteur (dans head-model) au-dessus de laquelle les éléments de coiffure « volumineux »
+ * (pointes, boucles, crête, mèches...) sont masqués quand un cosmétique recouvre le crâne.
+ * Sans ça, ils traversent le chapeau.
  */
-export function accessoryModel(id) {
+export const ACCESSORY_HAIR_CEILING = {
+  cap: 2.03, red_cap: 2.03, bucket_hat: 2.03, top_hat: 2.03, crown: 2.02, beanie: 2.03,
+  wizard_hat: 2.03, military_helmet: 2.03, space_helmet: 2.03, headphones: 2.02, ninja_mask: 2.02,
+  cowboy_hat: 2.03, pirate_hat: 2.03, chef_hat: 2.03, santa_hat: 2.03, beret: 2.03, propeller_cap: 2.03,
+  viking_helmet: 2.03, knight_helmet: 2.03, hardhat: 2.03, gaming_headset: 2.02, party_hat: 2.0
+};
+/** Cosmétiques qui recouvrent entièrement les cheveux. */
+export const ACCESSORY_HIDES_ALL_HAIR = new Set(['ninja_mask']);
+
+/**
+ * Collection de cosmétiques 3D.
+ * Toutes les coordonnées sont exprimées dans head-model (le personnage regarde vers -Z).
+ *
+ * Repères de la tête :
+ *   cube de 0.43, centré en y = 1.72 -> x,z de -0.215 à 0.215, y de 1.505 à 1.935
+ *   cheveux : jusqu'à ±0.255 en x/z et y ≈ 2.0
+ *   yeux : y 1.74, x ±0.105, devant à z ≈ -0.276 ; sourcils y 1.815 ; nez devant à z ≈ -0.303 ;
+ *   bouche y 1.59 ; oreilles x ±0.255, y 1.625-1.795
+ *
+ * Les couvre-chefs sont donc des volumes en boîtes (comme la tête et les cheveux) de demi-largeur
+ * 0.27, entre y = 1.86 et y = 2.03 : ils englobent le crâne ET la coiffure sans que les coins
+ * du cube ne dépassent (ce que faisaient les anciens dômes arrondis).
+ */
+export function accessoryModel(id, opts = {}) {
   const root = new THREE.Group();
   root.name = 'accessory';
 
   if (!id || id === 'none') return root;
 
-  const mat = (color, metalness = 0, roughness = 0.75) =>
-    new THREE.MeshStandardMaterial({ color, metalness, roughness });
+  const mat = (color, metalness = 0, roughness = 0.75, extra = {}) =>
+    new THREE.MeshStandardMaterial({ color, metalness, roughness, ...extra });
+  const glow = (color, intensity = 0.8) =>
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: intensity, roughness: 0.4 });
+  const glass = (color, opacity) =>
+    new THREE.MeshStandardMaterial({
+      color, metalness: 0.2, roughness: 0.08, transparent: true, opacity, depthWrite: false
+    });
 
   const addBox = (size, material, x, y, z, rotation = [0, 0, 0]) => {
     const m = box(root, size, material, x, y, z);
@@ -133,219 +162,598 @@ export function accessoryModel(id) {
     return m;
   };
 
-  const addSphere = (material, x, y, z, sx, sy, sz) => {
+  const addSphere = (material, x, y, z, sx, sy, sz, rotation = [0, 0, 0]) => {
     const m = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), material);
     m.position.set(x, y, z);
     m.scale.set(sx, sy, sz);
+    m.rotation.set(...rotation);
     root.add(m);
     return m;
   };
 
   const addCylinder = (radius, height, material, x, y, z, rotation = [0, 0, 0]) => {
-    const m = new THREE.Mesh(
-      new THREE.CylinderGeometry(radius, radius, height, 12),
-      material
-    );
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, height, 12), material);
     m.position.set(x, y, z);
     m.rotation.set(...rotation);
     root.add(m);
     return m;
   };
 
-  const addCone = (radius, height, material, x, y, z, rotation = [0, 0, 0]) => {
-    const m = new THREE.Mesh(
-      new THREE.ConeGeometry(radius, height, 8),
-      material
-    );
+  const addCone = (radius, height, material, x, y, z, rotation = [0, 0, 0], segments = 8, scale = [1, 1, 1]) => {
+    const m = new THREE.Mesh(new THREE.ConeGeometry(radius, height, segments), material);
+    m.position.set(x, y, z);
+    m.rotation.set(...rotation);
+    m.scale.set(...scale);
+    root.add(m);
+    return m;
+  };
+
+  const addTorus = (radius, tube, material, x, y, z, rotation = [0, 0, 0], arc = Math.PI * 2) => {
+    const m = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 6, 20, arc), material);
     m.position.set(x, y, z);
     m.rotation.set(...rotation);
     root.add(m);
     return m;
   };
 
-  const addTorus = (radius, tube, material, x, y, z, rotation = [0, 0, 0]) => {
-    const m = new THREE.Mesh(
-      new THREE.TorusGeometry(radius, tube, 6, 16),
-      material
-    );
-    m.position.set(x, y, z);
-    m.rotation.set(...rotation);
-    root.add(m);
-    return m;
+  /** Chaîne de cylindres effilés : chaque segment [rayonBas, rayonHaut, longueur, inclinaison latérale, inclinaison arrière]. */
+  const addLimb = (material, start, side, segments) => {
+    const p = new THREE.Vector3(...start);
+    const up = new THREE.Vector3(0, 1, 0);
+    for (const [rb, rt, len, out, back] of segments) {
+      const dir = new THREE.Vector3(
+        side * Math.sin(out), Math.cos(out) * Math.cos(back), Math.cos(out) * Math.sin(back)
+      ).normalize();
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, len * 1.06, 8), material);
+      m.quaternion.setFromUnitVectors(up, dir);
+      m.position.copy(p).addScaledVector(dir, len / 2);
+      root.add(m);
+      p.addScaledVector(dir, len);
+    }
   };
 
   const black = mat(0x20242c);
   const white = mat(0xe8e5dc);
   const gold = mat(0xe6b83f, 0.75, 0.25);
+  const darkGold = mat(0xb98a1e, 0.7, 0.3);
   const silver = mat(0xb9c4cc, 0.8, 0.25);
   const red = mat(0xd64b42);
-  const blue = mat(0x397fc4);
-  const purple = mat(0x9560d1);
   const green = mat(0x42a66a);
+  const pink = mat(0xe89aa8);
+
+  // Demi-largeur des couvre-chefs : englobe le crâne (0.215) + la coiffure (≈ 0.255).
+  const R = 0.27;
+
+  // Masque bas du visage : englobe le nez (devant à -0.303) et la bouche, sans que rien ne traverse.
+  const lowerFace = (material, detail) => {
+    addBox([0.45, 0.17, 0.11], material, 0, 1.63, -0.265);
+    if (detail) detail();
+    // Brides jusqu'aux oreilles
+    for (const s of [-1, 1]) addBox([0.014, 0.022, 0.2], material, s * 0.228, 1.665, -0.12);
+  };
+
+  // Lunettes : cadre en barres (les yeux restent visibles) + verres devant les pupilles.
+  const eyewear = ({ frame, lens, thick = 0.018, top = 0.018, rimW = 0.17 }) => {
+    const zF = -0.295, zL = -0.292, yE = 1.74;
+    for (const s of [-1, 1]) {
+      const cx = s * 0.105;
+      addBox([rimW - 0.03, 0.088, 0.008], lens, cx, yE, zL);
+      addBox([rimW, top, 0.022], frame, cx, yE + 0.046, zF);
+      addBox([rimW, thick, 0.022], frame, cx, yE - 0.046, zF);
+      addBox([thick, 0.1, 0.022], frame, cx - rimW / 2 + thick / 2, yE, zF);
+      addBox([thick, 0.1, 0.022], frame, cx + rimW / 2 - thick / 2, yE, zF);
+      // Branches vers les oreilles
+      addBox([0.014, 0.016, 0.2], frame, s * 0.224, yE + 0.02, -0.19);
+    }
+    addBox([0.05, 0.02, 0.022], frame, 0, yE + 0.018, zF);
+  };
+
+  // Couvre-chef de type casquette : calotte, plateau, bouton, visière.
+  const capShape = (body, brimMat, patchMat) => {
+    addBox([2 * R, 0.17, 2 * R], body, 0, 1.945, 0);
+    addBox([0.46, 0.035, 0.46], body, 0, 2.0475, 0);
+    addBox([0.05, 0.03, 0.05], brimMat, 0, 2.08, 0);
+    addBox([0.44, 0.03, 0.2], brimMat, 0, 1.88, -0.37, [-0.14, 0, 0]);
+    addBox([0.11, 0.075, 0.012], patchMat, 0, 1.955, -R - 0.002);
+  };
+
+  const hairMat = () => mat(opts.hairColor ?? 0x3a2a20);
+
+  // Arceau carré au-dessus des cheveux + écouteurs sur les oreilles.
+  const phones = (cup, pad) => {
+    addBox([0.6, 0.035, 0.05], black, 0, 2.04, 0);
+    for (const s of [-1, 1]) {
+      addBox([0.035, 0.27, 0.05], black, s * 0.285, 1.905, 0);
+      addBox([0.09, 0.2, 0.16], cup, s * 0.305, 1.71, 0);
+      addBox([0.012, 0.1, 0.1], pad, s * 0.355, 1.71, 0);
+    }
+  };
 
   switch (id) {
     // CHAPEAUX
     case 'cap':
-      addSphere(white, 0, 1.92, 0.015, 0.245, 0.13, 0.245);
-      addBox([0.46, 0.035, 0.2], white, 0, 1.89, -0.19);
+      capShape(mat(0xe8e5dc), mat(0xc9c5b8), mat(0x397fc4));
       break;
 
     case 'red_cap':
-      addSphere(red, 0, 1.92, 0.015, 0.245, 0.13, 0.245);
-      addBox([0.46, 0.035, 0.2], red, 0, 1.89, -0.19);
+      capShape(red, mat(0xa8352e), white);
       break;
 
-    case 'bucket_hat':
-      addBox([0.54, 0.045, 0.54], green, 0, 1.94, 0);
-      addSphere(green, 0, 1.99, 0.01, 0.18, 0.13, 0.18);
+    case 'bucket_hat': {
+      const cloth = mat(0x42a66a);
+      addBox([2 * R, 0.15, 2 * R], cloth, 0, 1.955, 0);
+      addBox([0.46, 0.03, 0.46], cloth, 0, 2.045, 0);
+      addBox([2 * R + 0.02, 0.045, 2 * R + 0.02], mat(0x2f7d4f), 0, 1.9025, 0);
+      addBox([0.72, 0.025, 0.72], cloth, 0, 1.87, 0);
+      for (const s of [-1, 1]) addBox([0.012, 0.025, 0.025], black, s * (R + 0.004), 1.96, 0);
       break;
+    }
 
     case 'top_hat':
-      addBox([0.53, 0.045, 0.53], black, 0, 1.95, 0);
-      addCylinder(0.16, 0.3, black, 0, 2.11, 0);
-      addBox([0.3, 0.025, 0.3], gold, 0, 2.03, -0.01);
+      addBox([0.66, 0.05, 0.66], black, 0, 2.005, 0);            // bord posé sur la coiffure
+      addBox([0.36, 0.3, 0.36], black, 0, 2.18, 0);
+      addBox([0.39, 0.025, 0.39], black, 0, 2.3425, 0);
+      addBox([0.375, 0.07, 0.375], mat(0xb83a33), 0, 2.065, 0);
+      addBox([0.07, 0.07, 0.012], gold, 0, 2.065, -0.19);
       break;
 
-    case 'crown':
-      addBox([0.44, 0.055, 0.42], gold, 0, 1.96, 0);
-      for (let i = -2; i <= 2; i++) {
-        addCone(0.055, 0.16, gold, i * 0.095, 2.065, 0);
+    case 'crown': {
+      addBox([2 * R, 0.085, 2 * R], gold, 0, 1.9775, 0);
+      addBox([2 * R + 0.006, 0.015, 2 * R + 0.006], darkGold, 0, 1.9525, 0);
+      const pts = [[-1, -1, 0.15], [0, -1, 0.21], [1, -1, 0.15], [-1, 0, 0.21], [1, 0, 0.21],
+        [-1, 1, 0.15], [0, 1, 0.21], [1, 1, 0.15]];
+      for (const [sx, sz, h] of pts) {
+        addCone(0.065, h, gold, sx * 0.2, 2.02 + h / 2 - 0.005, sz * 0.2, [0, Math.PI / 4, 0], 4);
+      }
+      addBox([0.05, 0.05, 0.012], red, 0, 1.98, -R - 0.002);
+      for (const s of [-1, 1]) addBox([0.012, 0.045, 0.045], mat(0x397fc4), s * (R + 0.002), 1.98, 0);
+      break;
+    }
+
+    case 'beanie': {
+      const wool = mat(0xd64b42);
+      addBox([2 * R, 0.17, 2 * R], wool, 0, 1.945, 0);
+      addBox([0.46, 0.04, 0.46], wool, 0, 2.05, 0);
+      addBox([0.57, 0.075, 0.57], white, 0, 1.8925, 0);
+      const rib = mat(0xa8352e);
+      addBox([2 * R + 0.006, 0.012, 2 * R + 0.006], rib, 0, 1.975, 0);
+      addBox([2 * R + 0.006, 0.012, 2 * R + 0.006], rib, 0, 2.005, 0);
+      addSphere(white, 0, 2.13, 0, 0.065, 0.065, 0.065);
+      break;
+    }
+
+    case 'wizard_hat': {
+      const cloth = mat(0x6a3fb0);
+      addBox([0.74, 0.03, 0.74], cloth, 0, 1.875, 0);
+      addBox([0.56, 0.14, 0.56], cloth, 0, 1.965, 0);
+      addBox([0.575, 0.05, 0.575], mat(0x3d2470), 0, 1.92, 0);
+      addBox([0.09, 0.08, 0.012], gold, 0, 1.92, -0.292);
+      addBox([0.44, 0.14, 0.44], cloth, 0, 2.105, 0);
+      addBox([0.33, 0.14, 0.33], cloth, 0, 2.245, 0.015);
+      addBox([0.22, 0.14, 0.22], cloth, 0, 2.385, 0.04, [0.12, 0, 0]);
+      addCone(0.105, 0.22, cloth, 0, 2.55, 0.1, [0.45, Math.PI / 4, 0], 4);
+      for (const [x, y] of [[0, 2.12], [-0.1, 2.08], [0.1, 2.08]]) {
+        addBox([0.035, 0.035, 0.012], gold, x, y, -0.222);
       }
       break;
-
-    case 'beanie':
-      addSphere(red, 0, 1.94, 0, 0.235, 0.18, 0.235);
-      addBox([0.45, 0.065, 0.44], white, 0, 1.84, 0);
-      addSphere(white, 0, 2.105, 0, 0.055, 0.055, 0.055);
-      break;
-
-    case 'wizard_hat':
-      addBox([0.55, 0.04, 0.55], purple, 0, 1.95, 0);
-      addCone(0.25, 0.52, purple, 0, 2.21, 0);
-      addSphere(gold, 0, 1.99, -0.02, 0.035, 0.035, 0.035);
-      break;
+    }
 
     // BANDEAUX ET BANDANAS
     case 'headband':
+      addBox([0.55, 0.07, 0.55], mat(0x397fc4), 0, 1.875, 0);
+      addBox([0.34, 0.025, 0.012], white, 0, 1.875, -0.277);
+      for (const s of [-1, 1]) addBox([0.05, 0.15, 0.02], mat(0x397fc4), s * 0.04, 1.79, 0.29, [0, 0, s * 0.15]);
+      break;
+
     case 'bandana':
-      addBox([0.47, 0.07, 0.48], id === 'bandana' ? red : blue, 0, 1.86, 0);
-      addBox([0.44, 0.035, 0.025], white, 0, 1.86, -0.24);
-      if (id === 'bandana') {
-        addBox([0.12, 0.08, 0.13], red, 0.22, 1.79, 0.13, [0, 0, -0.4]);
-      }
+      addBox([0.55, 0.09, 0.55], red, 0, 1.87, 0);
+      for (const x of [-0.12, 0, 0.12]) addBox([0.03, 0.03, 0.012], white, x, 1.87, -0.277);
+      addBox([0.08, 0.08, 0.06], red, 0, 1.87, 0.29);
+      for (const s of [-1, 1]) addBox([0.08, 0.2, 0.02], red, s * 0.045, 1.76, 0.305, [0, 0, s * 0.2]);
       break;
 
     // LUNETTES
     case 'glasses':
-    case 'sunglasses':
-    case 'neon_glasses': {
-      const frame = id === 'neon_glasses' ? green : black;
-      const lens = id === 'glasses' ? white : mat(0x172d45, 0.2, 0.2);
-      for (const side of [-1, 1]) {
-        addBox([0.18, 0.105, 0.035], frame, side * 0.105, 1.76, -0.245);
-        addBox([0.135, 0.065, 0.012], lens, side * 0.105, 1.76, -0.266);
-      }
-      addBox([0.07, 0.025, 0.025], frame, 0, 1.78, -0.25);
+      eyewear({ frame: mat(0x2b2f38, 0.3, 0.4), lens: glass(0xdfeaf2, 0.25) });
       break;
-    }
+
+    case 'sunglasses':
+      eyewear({
+        frame: black, lens: mat(0x0f1722, 0.5, 0.15), thick: 0.022, top: 0.03, rimW: 0.175
+      });
+      break;
+
+    case 'neon_glasses':
+      eyewear({ frame: glow(0x3dff9a, 1.1), lens: glass(0x6bffd6, 0.35), thick: 0.016, top: 0.016 });
+      break;
 
     case 'monocle':
-      addTorus(0.075, 0.012, gold, 0.105, 1.76, -0.25);
-      addBox([0.012, 0.12, 0.012], gold, 0.105, 1.66, -0.24);
+      addTorus(0.062, 0.009, gold, 0.105, 1.74, -0.295);
+      addCylinder(0.055, 0.006, glass(0xdfeaf2, 0.25), 0.105, 1.74, -0.293, [Math.PI / 2, 0, 0]);
+      addBox([0.008, 0.07, 0.008], gold, 0.15, 1.665, -0.29, [0, 0, 0.35]);
+      addBox([0.008, 0.07, 0.008], gold, 0.17, 1.6, -0.28, [0, 0, 0.1]);
       break;
 
     // MASQUES
     case 'mask':
-    case 'ninja_mask':
-    case 'medical_mask': {
-      const material = id === 'ninja_mask' ? black :
-        id === 'medical_mask' ? blue : green;
-      addBox([0.36, 0.15, 0.045], material, 0, 1.65, -0.255);
-      addBox([0.36, 0.025, 0.025], white, 0, 1.70, -0.28);
+      lowerFace(mat(0x42a66a), () => addBox([0.45, 0.02, 0.11], mat(0x6cc78c), 0, 1.7, -0.265));
+      break;
+
+    case 'medical_mask':
+      lowerFace(mat(0x6fb1de), () => {
+        for (const y of [1.595, 1.63, 1.665]) addBox([0.4, 0.008, 0.01], white, 0, y, -0.32);
+        addBox([0.14, 0.015, 0.012], silver, 0, 1.715, -0.32);
+      });
+      break;
+
+    case 'ninja_mask': {
+      lowerFace(black);
+      addBox([2 * R, 0.21, 2 * R], black, 0, 1.945, 0);
+      addBox([2 * R + 0.01, 0.045, 2 * R + 0.01], red, 0, 1.862, 0);
+      addBox([0.07, 0.04, 0.012], silver, 0, 1.862, -R - 0.006);
+      for (const s of [-1, 1]) addBox([0.05, 0.18, 0.02], red, s * 0.04, 1.77, 0.29, [0, 0, s * 0.2]);
       break;
     }
 
-    case 'skull_mask':
-      addBox([0.36, 0.19, 0.045], white, 0, 1.65, -0.255);
-      addBox([0.09, 0.07, 0.025], black, -0.09, 1.67, -0.282);
-      addBox([0.09, 0.07, 0.025], black, 0.09, 1.67, -0.282);
-      addBox([0.12, 0.035, 0.025], black, 0, 1.61, -0.282);
+    case 'skull_mask': {
+      lowerFace(white, () => {
+        addBox([0.05, 0.06, 0.01], black, 0, 1.675, -0.32);
+        addBox([0.34, 0.012, 0.01], black, 0, 1.605, -0.32);
+        for (let i = -3; i <= 3; i++) addBox([0.012, 0.06, 0.01], black, i * 0.05, 1.575, -0.32);
+        addBox([0.012, 0.04, 0.01], black, -0.12, 1.675, -0.32, [0, 0, 0.3]);
+        addBox([0.012, 0.04, 0.01], black, 0.12, 1.675, -0.32, [0, 0, -0.3]);
+      });
       break;
+    }
 
     // ÉQUIPEMENTS
     case 'headphones':
-      addTorus(0.22, 0.035, black, 0, 1.79, 0.015);
-      for (const side of [-1, 1]) {
-        addBox([0.09, 0.19, 0.09], black, side * 0.235, 1.76, 0);
-        addBox([0.065, 0.12, 0.025], blue, side * 0.235, 1.76, -0.05);
+      phones(mat(0x20242c), mat(0x397fc4));
+      break;
+
+    case 'military_helmet': {
+      const olive = mat(0x52684a);
+      const darkOlive = mat(0x3d4f37);
+      addBox([2 * R, 0.165, 2 * R], olive, 0, 1.9425, 0);
+      addBox([0.46, 0.04, 0.46], olive, 0, 2.045, 0);
+      addBox([0.6, 0.05, 0.6], darkOlive, 0, 1.865, 0);
+      addBox([2 * R + 0.01, 0.03, 2 * R + 0.01], darkOlive, 0, 1.96, 0);
+      addBox([0.56, 0.1, 0.05], olive, 0, 1.8, 0.29);
+      addBox([0.08, 0.08, 0.012], mat(0xd6b84a, 0.4, 0.4), 0, 1.945, -R - 0.002);
+      for (const s of [-1, 1]) addBox([0.015, 0.24, 0.03], mat(0x2b3326), s * 0.262, 1.72, -0.12);
+      break;
+    }
+
+    case 'space_helmet': {
+      const frame = mat(0xdfe5ea, 0.3, 0.4);
+      addBox([0.56, 0.58, 0.56], glass(0x8dc9e5, 0.2), 0, 1.76, 0);
+      addBox([0.64, 0.09, 0.64], frame, 0, 1.47, 0);
+      addBox([0.6, 0.045, 0.6], frame, 0, 2.0725, 0);
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) addBox([0.045, 0.58, 0.045], frame, sx * 0.29, 1.76, sz * 0.29);
+        addBox([0.04, 0.08, 0.08], glow(0x3dd6ff, 0.9), sx * 0.325, 1.76, 0);
       }
+      addCylinder(0.012, 0.1, silver, 0.2, 2.14, 0.1);
+      addSphere(glow(0xff4a3a, 1), 0.2, 2.2, 0.1, 0.03, 0.03, 0.03);
       break;
-
-    case 'military_helmet':
-      addSphere(mat(0x52684a), 0, 1.96, 0, 0.255, 0.16, 0.255);
-      addBox([0.48, 0.04, 0.44], mat(0x52684a), 0, 1.91, -0.015);
-      break;
-
-    case 'space_helmet':
-      addSphere(mat(0x8dc9e5, 0.35, 0.2), 0, 1.77, 0, 0.3, 0.31, 0.3);
-      addBox([0.37, 0.22, 0.035], mat(0x347caa, 0.6, 0.2), 0, 1.77, -0.265);
-      break;
+    }
 
     // FANTAISIE
     case 'devil_horns':
-      for (const side of [-1, 1]) {
-        addCone(0.075, 0.27, red, side * 0.16, 2.08, 0,
-          [0, 0, side * -0.32]);
+      for (const s of [-1, 1]) {
+        addLimb(red, [s * 0.14, 1.96, -0.02], s, [
+          [0.055, 0.042, 0.12, 0.25, 0.15],
+          [0.042, 0.028, 0.11, 0.5, 0.25],
+          [0.028, 0.004, 0.11, 0.85, 0.35]
+        ]);
       }
       break;
 
     case 'angel_halo':
-      addTorus(0.2, 0.025, gold, 0, 2.13, 0);
+      addTorus(0.27, 0.022, glow(0xffd84a, 0.9), 0, 2.14, 0, [Math.PI / 2 + 0.08, 0, 0]);
       break;
 
     case 'cat_ears':
-      for (const side of [-1, 1]) {
-        addCone(0.12, 0.25, black, side * 0.16, 2.02, 0);
+      for (const s of [-1, 1]) {
+        addCone(0.11, 0.26, black, s * 0.155, 2.1, -0.01, [0, 0, -s * 0.2], 4, [1, 1, 0.55]);
+        addCone(0.065, 0.18, pink, s * 0.152, 2.09, -0.05, [0, 0, -s * 0.2], 4, [1, 1, 0.3]);
       }
       break;
 
     case 'bunny_ears':
-      for (const side of [-1, 1]) {
-        addSphere(white, side * 0.12, 2.08, 0, 0.065, 0.21, 0.06);
-        addSphere(red, side * 0.12, 2.08, -0.05, 0.025, 0.15, 0.012);
+      for (const s of [-1, 1]) {
+        addSphere(white, s * 0.12, 2.1, 0, 0.065, 0.21, 0.06, [0, 0, -s * 0.12]);
+        addSphere(pink, s * 0.12 + s * 0.004, 2.1, -0.045, 0.03, 0.15, 0.02, [0, 0, -s * 0.12]);
       }
       break;
 
     case 'robot_antenna':
-      addCylinder(0.018, 0.2, silver, 0, 2.04, 0);
-      addSphere(green, 0, 2.15, 0, 0.06, 0.06, 0.06);
+      addBox([0.08, 0.03, 0.08], silver, 0, 2.01, 0);
+      addCylinder(0.018, 0.2, silver, 0, 2.11, 0);
+      addSphere(glow(0x42ff8a, 1), 0, 2.23, 0, 0.06, 0.06, 0.06);
       break;
 
-    case 'flower':
-      addSphere(gold, 0.19, 1.96, -0.06, 0.055, 0.055, 0.055);
-      for (let i = 0; i < 5; i++) {
-        const a = i * Math.PI * 2 / 5;
-        addSphere(red,
-          0.19 + Math.cos(a) * 0.075,
-          1.96 + Math.sin(a) * 0.075,
-          -0.06,
-          0.045, 0.045, 0.035);
+    case 'flower': {
+      // Épinglée au-dessus de l'oreille droite, pétales dans le plan YZ (face vers l'extérieur).
+      const cx = 0.262, cy = 1.93, cz = -0.07;
+      addSphere(gold, cx + 0.012, cy, cz, 0.04, 0.04, 0.04);
+      for (let i = 0; i < 6; i++) {
+        const a = i * Math.PI * 2 / 6;
+        addSphere(red, cx, cy + Math.cos(a) * 0.07, cz + Math.sin(a) * 0.07, 0.03, 0.05, 0.05);
       }
+      addBox([0.012, 0.03, 0.09], green, cx - 0.002, cy - 0.09, cz + 0.07, [0.5, 0, 0]);
       break;
+    }
 
-    case 'star':
-      addCone(0.13, 0.24, gold, 0, 2.08, 0);
+    case 'star': {
+      const shape = new THREE.Shape();
+      for (let i = 0; i < 10; i++) {
+        const a = Math.PI / 2 + i * Math.PI / 5;
+        const r = i % 2 ? 0.055 : 0.12;
+        if (i) shape.lineTo(Math.cos(a) * r, Math.sin(a) * r); else shape.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      shape.closePath();
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.04, bevelEnabled: false });
+      geo.translate(0, 0, -0.02);
+      const star = new THREE.Mesh(geo, glow(0xffd84a, 0.7));
+      star.position.set(0, 2.24, 0);
+      root.add(star);
+      addCylinder(0.012, 0.12, gold, 0, 2.06, 0);
       break;
+    }
 
     case 'earrings':
-      for (const side of [-1, 1]) {
-        addTorus(0.045, 0.012, gold, side * 0.26, 1.62, -0.015,
-          [Math.PI / 2, 0, 0]);
+      for (const s of [-1, 1]) {
+        // Anneau vertical (plan YZ) accroché au lobe de l'oreille
+        addTorus(0.04, 0.01, gold, s * 0.262, 1.595, 0, [0, Math.PI / 2, 0]);
       }
       break;
 
     case 'piercing':
-      addSphere(silver, 0.14, 1.68, -0.28, 0.025, 0.025, 0.025);
+      // Piercing de sourcil (côté droit) : deux billes reliées par une barre, collées au sourcil
+      addBox([0.008, 0.06, 0.008], silver, 0.13, 1.815, -0.272);
+      addSphere(silver, 0.13, 1.845, -0.272, 0.016, 0.016, 0.016);
+      addSphere(silver, 0.13, 1.785, -0.272, 0.016, 0.016, 0.016);
+      break;
+
+    // ---------------------------------------------------------------- NOUVEAUX CHAPEAUX
+    case 'cowboy_hat': {
+      const felt = mat(0x8a5a2b), brimM = mat(0x7a4c22);
+      addBox([2 * R, 0.17, 2 * R], felt, 0, 1.945, 0);
+      addBox([0.42, 0.05, 0.42], felt, 0, 2.055, 0);
+      addBox([0.58, 0.025, 0.64], brimM, 0, 1.87, 0);
+      for (const s of [-1, 1]) addBox([0.16, 0.025, 0.64], brimM, s * 0.35, 1.895, 0, [0, 0, s * 0.35]); // bords relevés
+      addBox([2 * R + 0.01, 0.045, 2 * R + 0.01], mat(0x3b2a1c), 0, 1.9, 0);
+      addBox([0.07, 0.05, 0.012], gold, 0, 1.9, -R - 0.008);
+      break;
+    }
+
+    case 'pirate_hat': {
+      const felt = mat(0x1d2027);
+      addBox([2 * R, 0.17, 2 * R], felt, 0, 1.945, 0);
+      addBox([0.46, 0.03, 0.46], felt, 0, 2.045, 0);
+      addBox([0.7, 0.03, 0.7], felt, 0, 1.875, 0);
+      for (const s of [-1, 1]) addBox([0.03, 0.16, 0.66], felt, s * 0.363, 1.966, 0, [0, 0, -s * 0.22]);
+      addBox([0.66, 0.16, 0.03], felt, 0, 1.966, -0.372, [-0.22, 0, 0]);
+      addBox([0.1, 0.075, 0.012], white, 0, 1.962, -0.392, [-0.22, 0, 0]);
+      for (const s of [-1, 1]) addBox([0.022, 0.022, 0.012], black, s * 0.025, 1.968, -0.399, [-0.22, 0, 0]);
+      addBox([0.7, 0.012, 0.012], gold, 0, 1.892, -0.352);
+      break;
+    }
+
+    case 'chef_hat': {
+      const cloth = mat(0xf2efe6);
+      addBox([2 * R, 0.17, 2 * R], cloth, 0, 1.945, 0);
+      addBox([0.5, 0.08, 0.5], cloth, 0, 2.07, 0);
+      addBox([2 * R + 0.008, 0.012, 2 * R + 0.008], mat(0xd9d5c8), 0, 1.9, 0);
+      addSphere(cloth, 0, 2.22, 0, 0.26, 0.16, 0.26);
+      for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) addSphere(cloth, x * 0.17, 2.17, z * 0.17, 0.17, 0.14, 0.17);
+      break;
+    }
+
+    case 'party_hat': {
+      const cone = mat(0xe0559a);
+      addCone(0.17, 0.38, cone, 0, 2.18, 0, [-0.08, 0, 0.06]);
+      addTorus(0.128, 0.012, mat(0xffd84a), 0, 2.1, 0, [Math.PI / 2 - 0.08, 0, 0.06]);
+      addTorus(0.088, 0.012, mat(0x4ac8ff), 0, 2.2, 0, [Math.PI / 2 - 0.08, 0, 0.06]);
+      addSphere(gold, 0.018, 2.37, 0.03, 0.04, 0.04, 0.04);
+      break;
+    }
+
+    case 'santa_hat': {
+      const cloth = mat(0xd22f2f), fur = mat(0xf4f1ea);
+      addBox([2 * R, 0.17, 2 * R], cloth, 0, 1.945, 0);
+      addBox([0.58, 0.09, 0.58], fur, 0, 1.9, 0);
+      addLimb(cloth, [0, 2.03, 0], 1, [
+        [0.2, 0.16, 0.14, 0, 0.2], [0.16, 0.12, 0.13, 0, 0.7],
+        [0.12, 0.09, 0.12, 0, 1.3], [0.09, 0.07, 0.1, 0, 2.0]
+      ]);
+      addSphere(fur, 0, 2.235, 0.345, 0.06, 0.06, 0.06);
+      break;
+    }
+
+    case 'beret': {
+      const wool = mat(0x7a2b3a);
+      const tilt = new THREE.Group();
+      tilt.position.set(0, 1.99, 0);
+      tilt.rotation.z = 0.08;
+      root.add(tilt);
+      box(tilt, [0.56, 0.09, 0.56], wool, 0, 0, 0);
+      const second = box(tilt, [0.56, 0.086, 0.56], wool, 0, 0, 0);
+      second.rotation.y = Math.PI / 4;
+      box(tilt, [0.04, 0.04, 0.04], black, 0, 0.065, 0);
+      break;
+    }
+
+    case 'propeller_cap': {
+      capShape(mat(0x397fc4), mat(0xd64b42), mat(0xffd84a));
+      addCylinder(0.012, 0.06, silver, 0, 2.1, 0);
+      addBox([0.36, 0.012, 0.07], mat(0xffd84a), 0, 2.135, 0, [0, 0.5, 0]);
+      addBox([0.36, 0.012, 0.07], mat(0xd64b42), 0, 2.133, 0, [0, 0.5 + Math.PI / 2, 0]);
+      break;
+    }
+
+    // ---------------------------------------------------------------- NOUVEAUX ÉQUIPEMENTS
+    case 'viking_helmet': {
+      const steel = mat(0x9aa4ad, 0.8, 0.35), bone = mat(0xece3c9);
+      addBox([2 * R, 0.17, 2 * R], steel, 0, 1.945, 0);
+      addBox([0.46, 0.03, 0.46], steel, 0, 2.045, 0);
+      addBox([0.04, 0.03, 0.5], steel, 0, 2.07, 0);
+      addBox([2 * R + 0.01, 0.04, 2 * R + 0.01], mat(0x6d5a2a, 0.6, 0.4), 0, 1.88, 0);
+      addBox([0.04, 0.14, 0.02], steel, 0, 1.79, -0.275);
+      for (const s of [-1, 1]) {
+        addLimb(bone, [s * 0.27, 1.93, 0], s, [
+          [0.05, 0.045, 0.1, 1.35, 0], [0.045, 0.035, 0.1, 0.95, 0],
+          [0.035, 0.022, 0.1, 0.45, 0], [0.022, 0.006, 0.1, 0.1, 0]
+        ]);
+      }
+      break;
+    }
+
+    case 'knight_helmet': {
+      const steel = mat(0x9aa4ad, 0.8, 0.35);
+      addBox([0.66, 0.56, 0.58], steel, 0, 1.76, 0);
+      addBox([0.05, 0.56, 0.02], mat(0xc4ccd3, 0.8, 0.3), 0, 1.76, -0.292);
+      addBox([0.46, 0.045, 0.012], black, 0, 1.76, -0.292);
+      for (const y of [1.66, 1.6, 1.54]) addBox([0.03, 0.025, 0.012], black, 0.14, y, -0.292);
+      addBox([0.07, 0.14, 0.34], red, 0, 2.11, 0);
+      addBox([0.3, 0.03, 0.3], steel, 0, 2.055, 0);
+      break;
+    }
+
+    case 'hardhat': {
+      const yellow = mat(0xf2c230);
+      addBox([2 * R, 0.17, 2 * R], yellow, 0, 1.945, 0);
+      addBox([0.6, 0.03, 0.6], yellow, 0, 1.865, 0);
+      addBox([0.4, 0.025, 0.14], yellow, 0, 1.87, -0.34, [-0.08, 0, 0]);
+      addBox([0.1, 0.04, 0.5], mat(0xd9a820), 0, 2.05, 0);
+      addBox([0.1, 0.06, 0.04], glow(0xfff2b0, 0.9), 0, 1.975, -R - 0.012);
+      break;
+    }
+
+    case 'gaming_headset': {
+      phones(mat(0x20242c), mat(0xd64b42));
+      addBox([0.012, 0.012, 0.2], black, -0.3, 1.64, -0.18);
+      addBox([0.23, 0.012, 0.012], black, -0.19, 1.64, -0.285);
+      addBox([0.045, 0.045, 0.04], black, -0.065, 1.64, -0.285);
+      addBox([0.047, 0.047, 0.012], glow(0xff3b3b, 0.9), -0.065, 1.64, -0.305);
+      break;
+    }
+
+    // ---------------------------------------------------------------- NOUVELLES LUNETTES
+    case 'pilot_goggles': {
+      const leather = mat(0x6b4a2b);
+      addBox([0.55, 0.05, 0.55], leather, 0, 1.9, 0);
+      for (const s of [-1, 1]) {
+        addCylinder(0.068, 0.05, gold, s * 0.09, 1.9, -0.3, [Math.PI / 2, 0, 0]);
+        addCylinder(0.052, 0.054, glass(0xffb347, 0.65), s * 0.09, 1.9, -0.302, [Math.PI / 2, 0, 0]);
+      }
+      addBox([0.05, 0.02, 0.03], gold, 0, 1.9, -0.29);
+      break;
+    }
+
+    case 'cyber_visor': {
+      const visor = new THREE.MeshStandardMaterial({
+        color: 0x00e5ff, emissive: 0x00e5ff, emissiveIntensity: 0.8,
+        transparent: true, opacity: 0.45, depthWrite: false
+      });
+      addBox([0.46, 0.1, 0.03], visor, 0, 1.745, -0.3);
+      addBox([0.48, 0.016, 0.04], black, 0, 1.8, -0.3);
+      addBox([0.48, 0.016, 0.04], black, 0, 1.69, -0.3);
+      for (const s of [-1, 1]) {
+        addBox([0.016, 0.03, 0.22], black, s * 0.228, 1.745, -0.19);
+        addBox([0.03, 0.06, 0.07], glow(0x00e5ff, 1), s * 0.236, 1.745, -0.07);
+      }
+      break;
+    }
+
+    case 'eyepatch': {
+      addBox([0.115, 0.1, 0.016], black, -0.105, 1.74, -0.292);
+      addBox([0.55, 0.022, 0.02], black, 0, 1.86, -0.268);
+      addBox([0.55, 0.022, 0.02], black, 0, 1.86, 0.268);
+      for (const s of [-1, 1]) addBox([0.02, 0.022, 0.55], black, s * 0.265, 1.86, 0);
+      addBox([0.014, 0.078, 0.012], black, -0.1525, 1.82, -0.29, [0, 0, 0.64]);
+      break;
+    }
+
+    // ---------------------------------------------------------------- VISAGE
+    case 'mustache': {
+      const hm = hairMat();
+      addBox([0.11, 0.03, 0.045], hm, 0, 1.618, -0.272);
+      for (const s of [-1, 1]) addBox([0.05, 0.025, 0.04], hm, s * 0.085, 1.626, -0.27, [0, 0, s * 0.45]);
+      break;
+    }
+
+    case 'beard': {
+      const hm = hairMat();
+      for (const s of [-1, 1]) {
+        addBox([0.15, 0.17, 0.09], hm, s * 0.15, 1.59, -0.25);
+        addBox([0.03, 0.14, 0.2], hm, s * 0.23, 1.62, -0.115);
+      }
+      addBox([0.3, 0.07, 0.1], hm, 0, 1.54, -0.255);
+      addBox([0.2, 0.03, 0.05], hm, 0, 1.618, -0.272);
+      addBox([0.1, 0.06, 0.06], hm, 0, 1.485, -0.26);
+      break;
+    }
+
+    case 'clown_nose':
+      addSphere(mat(0xe8322f, 0, 0.35), 0, 1.665, -0.315, 0.065, 0.065, 0.065);
+      for (const s of [-1, 1]) addBox([0.07, 0.07, 0.01], mat(0xe8322f), s * 0.15, 1.64, -0.218);
+      break;
+
+    // ---------------------------------------------------------------- NOUVELLE FANTAISIE
+    case 'unicorn_horn': {
+      const d = new THREE.Vector3(0, Math.cos(0.4), -Math.sin(0.4));
+      const base = new THREE.Vector3(0, 2.0, -0.12), len = 0.38;
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.06, len, 8), mat(0xfaf3ff, 0.1, 0.4));
+      horn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+      horn.position.copy(base).addScaledVector(d, len / 2);
+      root.add(horn);
+      for (const t of [0.25, 0.5, 0.75]) {
+        const ring = addTorus(0.06 * (1 - t) + 0.008, 0.008, gold, 0, 0, 0);
+        ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), d);
+        ring.position.copy(base).addScaledVector(d, len * t);
+      }
+      break;
+    }
+
+    case 'bear_ears':
+      for (const s of [-1, 1]) {
+        addSphere(mat(0x8b5a2b), s * 0.17, 2.05, -0.02, 0.11, 0.11, 0.06);
+        addSphere(mat(0xd9b48a), s * 0.17, 2.05, -0.07, 0.065, 0.065, 0.02);
+      }
+      break;
+
+    case 'alien_antennae':
+      for (const s of [-1, 1]) {
+        addLimb(mat(0x56c26a), [s * 0.1, 1.99, -0.02], s, [
+          [0.014, 0.012, 0.12, 0.25, 0.1], [0.012, 0.01, 0.12, 0.35, 0.05]
+        ]);
+        addSphere(glow(0xb6ff3d, 0.9), s * 0.18, 2.24, -0.003, 0.05, 0.05, 0.05);
+      }
+      break;
+
+    case 'laurel': {
+      const leaf = mat(0x7a9a3a);
+      const o = 0.275;
+      addBox([0.55, 0.014, 0.02], gold, 0, 1.875, -0.268);
+      addBox([0.55, 0.014, 0.02], gold, 0, 1.875, 0.268);
+      for (const s of [-1, 1]) addBox([0.02, 0.014, 0.55], gold, s * 0.268, 1.875, 0);
+      let k = 0;
+      for (let i = -3; i <= 3; i++) for (const z of [-o, o]) {
+        const tilt = (k++ % 2 ? 1 : -1) * 0.5;
+        addBox([0.07, 0.035, 0.022], leaf, i * 0.08, 1.875 + (tilt > 0 ? 0.015 : -0.015), z, [0, 0, tilt]);
+      }
+      for (let i = -2; i <= 2; i++) for (const x of [-o, o]) {
+        const tilt = (k++ % 2 ? 1 : -1) * 0.5;
+        addBox([0.022, 0.035, 0.07], leaf, x, 1.875 + (tilt > 0 ? 0.015 : -0.015), i * 0.09, [tilt, 0, 0]);
+      }
+      break;
+    }
+
+    // ---------------------------------------------------------------- BIJOUX
+    case 'nose_ring':
+      addTorus(0.03, 0.007, gold, 0, 1.62, -0.3);
       break;
 
     default:
@@ -355,7 +763,7 @@ export function accessoryModel(id) {
 
   root.traverse(o => {
     if (o.isMesh) {
-      o.castShadow = true;
+      o.castShadow = !o.material.transparent;
       o.userData.cosmetic = id;
     }
   });
@@ -734,8 +1142,28 @@ export function createCharacter({ shirt = 0xc94f36, label = null, inputType = 'k
   box(face, [0.105, 0.025, 0.025], mouth,
     0, 1.61, -0.225);
 
-  const accessory = accessoryModel(look?.accessory);
+  const accessory = accessoryModel(look?.accessory, { hairColor: hair.color.getHex() });
   headModel.add(accessory);
+
+  // Les cosmétiques qui recouvrent le crâne (chapeaux, casques, cagoule) masquent les éléments de
+  // coiffure qui les traverseraient (pointes, boucles, crête, mèches...).
+  const hairCeiling = ACCESSORY_HAIR_CEILING[look?.accessory];
+  if (hairCeiling !== undefined) {
+    if (ACCESSORY_HIDES_ALL_HAIR.has(look.accessory)) {
+      hairGroup.visible = false;
+    } else {
+      const volumetric = /^hair-(spike|volume|ridge|quiff|lock|sweep|part|tuft)/;
+      let hidden = 0;
+      for (const part of hairGroup.children) {
+        if (!volumetric.test(part.name)) continue;
+        part.geometry.computeBoundingBox();
+        const top = part.position.y + part.geometry.boundingBox.max.y * part.scale.y;
+        if (top > hairCeiling) { part.visible = false; hidden++; }
+      }
+      // L'afro n'a pas de coque : sans ses grosses masses, on lui en redonne une sous le chapeau.
+      if (hairStyle === 'afro' && hidden) shell({ t: 0.04, top: 0.075, sideBottom: 1.74, backBottom: 1.66 });
+    }
+  }
 
   const arms = [], legs = [];
   [-1, 1].forEach(s => {

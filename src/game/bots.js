@@ -309,7 +309,7 @@ class BotController {
     const g = this.g;
     if (g.isBomb() && g.bombHolder !== this.id) return [];
     return g.ids.filter(v =>
-      v !== this.id && !g.dead[v] && !(g.invuln[v] > now) && !(g.isBomb() && g.bombNoTag[v] > now)
+      v !== this.id && g.isEnemy(this.id, v) && !g.dead[v] && !(g.invuln[v] > now) && !(g.isBomb() && g.bombNoTag[v] > now)
     );
   }
 
@@ -317,7 +317,7 @@ class BotController {
     const g = this.g, p = this.p;
     let best = -1, bd = Infinity;
     for (const v of g.ids) {
-      if (v === this.id || g.dead[v]) continue;
+      if (v === this.id || g.dead[v] || !g.isEnemy(this.id, v)) continue;
       const q = g.posOf(v), d = Math.hypot(q.x - p.x, q.z - p.z);
       if (d < bd) { bd = d; best = v; }
     }
@@ -376,11 +376,16 @@ class BotController {
       if (g.bombHolder === me) { // chasseur : le joueur le plus proche qui n'est pas immunisé
         let best = null, bd = Infinity;
         for (const v of g.alive()) {
-          if (v === me || g.dead[v]) continue;
+          if (v === me || g.dead[v] || !g.isEnemy(me, v)) continue;
           const q = g.posOf(v), d = Math.hypot(q.x - p.x, q.z - p.z) + (g.bombNoTag[v] > now ? 30 : 0);
           if (d < bd) { bd = d; best = q; }
         }
         if (best) this.goal = { x: best.x, z: best.z };
+      } else if (g.sameTeam(me, g.bombHolder)) { // le porteur est un allié : rien à fuir
+        if (!this.goal || now >= this.roamUntil) {
+          this.roamUntil = now + rand(3000, 5000);
+          this.goal = this.mgr.nav.randomPoint();
+        }
       } else {
         this.fleeGoal(now, g.bombHolder);
       }

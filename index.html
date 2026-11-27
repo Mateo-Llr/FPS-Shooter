@@ -58,6 +58,11 @@
   <symbol id="i-timer" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M10 2h4m-2 12l3-3"/><circle cx="12" cy="14" r="8"/></g></symbol>
   <symbol id="i-flame" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0a5 5 0 0 1 1-3a1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"/></symbol>
   <symbol id="i-gift" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 7v14m8-10v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8m3.5-4a1 1 0 0 1 0-5A4.8 8 0 0 1 12 7a4.8 8 0 0 1 4.5-5a1 1 0 0 1 0 5"/><rect width="18" height="4" x="3" y="7" rx="1"/></g></symbol>
+  <symbol id="i-log-out" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14l5-5l-5-5m5 5H9"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="m18 14l4 4l-4 4m0-20l4 4l-4 4"/><path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22M2 6h1.972a4 4 0 0 1 3.3 1.7M22 18h-6.041a4 4 0 0 1-3.3-1.7l-.327-.6"/></g></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14m-7-7v14"/></symbol>
+  <symbol id="i-crown" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/><path d="M5 21h14"/></g></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2m16 0h2m-7-1v2m-6-2v2"/></g></symbol>
 </svg>
     <div id="app">
 
@@ -155,7 +160,7 @@
 
           <div class="room-code-wrap">
             <span id="display-code" class="room-code">------</span>
-            <button id="copy-code" class="quiet">COPIER</button>
+            <button id="copy-code" class="quiet" type="button" aria-label="Copier le code du salon" title="Copier le code"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg></button>
           </div>
 
           <p
@@ -171,13 +176,13 @@
             <div class="settings-grid">
 
               <label>
-                CARTE
+                Carte
                 <select id="map-select"></select>
                 <span id="map-description" class="map-description"></span>
               </label>
 
               <label>
-                MODE DE JEU
+                Mode de jeu
                 <select id="game-mode">
                   <option value="deathmatch" selected>Combat classique</option>
                   <option value="flag">Capture du drapeau</option>
@@ -186,8 +191,27 @@
                 </select>
               </label>
 
+              <label>
+                Équipes
+                <select id="team-mode">
+                  <option value="off" selected>Chacun pour soi</option>
+                  <option value="on">Par équipes</option>
+                </select>
+              </label>
+
+              <label id="team-count-wrap" class="hidden">
+                Nombre d'équipes
+                <select id="team-count"></select>
+              </label>
+
+              <div id="team-balance-wrap" class="hidden">
+                <button id="team-balance" class="link-btn" type="button">
+                  <svg class="ic" aria-hidden="true"><use href="#i-shuffle"/></svg><span>Répartir équitablement</span>
+                </button>
+              </div>
+
               <label id="flag-time-wrap" class="hidden">
-                TEMPS DE CAPTURE
+                Temps de capture
                 <select id="flag-time">
                   <option value="10">10 secondes</option>
                   <option value="20" selected>20 secondes</option>
@@ -198,7 +222,7 @@
               </label>
 
               <label id="flag-size-wrap" class="hidden">
-                TAILLE DE LA ZONE
+                Taille de la zone
                 <select id="flag-size">
                   <option value="3">Petite (rayon 3 m)</option>
                   <option value="5" selected>Moyenne (rayon 5 m)</option>
@@ -208,7 +232,7 @@
               </label>
 
               <label id="bomb-time-wrap" class="hidden">
-                COMPTEUR DE LA BOMBE
+                Compteur de la bombe
                 <select id="bomb-time">
                   <option value="30">30 secondes</option>
                   <option value="45" selected>45 secondes</option>
@@ -218,7 +242,7 @@
               </label>
 
               <label id="crown-time-wrap" class="hidden">
-                TEMPS AVEC LA COURONNE
+                Temps avec la couronne
                 <select id="crown-time">
                   <option value="30">30 secondes</option>
                   <option value="60" selected>60 secondes</option>
@@ -229,7 +253,7 @@
               </label>
 
               <label id="win-mode-wrap">
-                CONDITION DE VICTOIRE
+                Condition de victoire
                 <select id="win-mode">
                   <option value="kills">Premier à X éliminations</option>
                   <option value="time">Meilleur score au temps</option>
@@ -237,7 +261,7 @@
               </label>
 
               <label id="target-wrap">
-                ÉLIMINATIONS
+                Éliminations
                 <select id="target-kills">
                   <option>5</option>
                   <option selected>10</option>
@@ -247,7 +271,7 @@
               </label>
 
               <label id="duration-wrap" class="hidden">
-                DURÉE
+                Durée
                 <select id="duration">
                   <option value="120">2 minutes</option>
                   <option value="180" selected>3 minutes</option>
@@ -256,7 +280,7 @@
               </label>
 
               <label id="weapon-rule-wrap">
-                ARSENAL
+                Arsenal
                 <select id="weapon-rule">
                   <option value="all">Toutes les armes</option>
                   <option value="shotgun">Fusil à pompe uniquement</option>
@@ -268,7 +292,7 @@
             </div>
 
             <button id="start-game" class="primary wide" disabled>
-              LANCER LA PARTIE
+              <svg class="ic" aria-hidden="true"><use href="#i-swords"/></svg><span>LANCER LA PARTIE</span>
             </button>
 
           </div>
@@ -278,10 +302,10 @@
             De 2 à 16 joueurs.
           </p>
 
-          <button id="open-settings-lobby" class="quiet">⚙ PARAMÈTRES</button>
+          <button id="open-settings-lobby" class="quiet" type="button"><svg class="ic" aria-hidden="true"><use href="#i-settings"/></svg><span>Paramètres</span></button>
 
-          <button id="leave-lobby" class="quiet">
-            QUITTER LE SALON
+          <button id="leave-lobby" class="quiet" type="button">
+            <svg class="ic" aria-hidden="true"><use href="#i-log-out"/></svg><span>Quitter le salon</span>
           </button>
 
         </section>

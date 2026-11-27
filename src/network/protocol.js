@@ -1,11 +1,11 @@
 // Protocole versionné : ne jamais faire confiance aux messages du pair.
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const MAX_PLAYERS = 16;
 export const MSG = Object.freeze({
   HELLO: 'hello', READY: 'ready', START: 'start', INPUT: 'input',
   STATE: 'state', EVENT: 'event', PING: 'ping', PONG: 'pong',
   GAMEOVER: 'gameover', RECONNECT: 'reconnect', ROSTER: 'roster', REPLAY: 'replay',
-  KICK: 'kick', CHAT: 'chat'
+  KICK: 'kick', CHAT: 'chat', TEAM: 'team'
 });
 
 export function validMessage(message) {

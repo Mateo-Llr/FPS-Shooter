@@ -1,6 +1,9 @@
 import { MSG, MAX_PLAYERS } from '../network/protocol.js';
 import { APPEARANCE_OPTIONS, getAppearance, normalizeAppearance } from '../game/customization.js';
 import { DEFAULT_MAP_ID, getMap, MAPS } from '../game/world.js';
+import {
+  MAX_TEAMS, MIN_TEAMS, clampTeamCount, validTeam, leastPopulatedTeam, fixTeams, balanceTeams, activeTeamCount
+} from '../game/teams.js';
 import { BOT_LEVEL_DEFAULT, BOT_LEVEL_MAX, BOT_LEVEL_MIN, BOT_NAMES, clampBotLevel } from '../game/bots.js';
 
 const $ = s => document.querySelector(s);
@@ -42,6 +45,8 @@ export class Lobby {
     this.started = false;
     this.postGame = false;
     this.kickReason = '';
+    this.teamsOn = false;  // partie par équipes ?
+    this.teamCount = 2;    // nombre d'équipes (2 à 16)
     this.replayVotes = new Set();
     this.game.onFinish = () => this.onGameFinished();
     this.game.onReplayVote = () => this.toggleReplayVote();
@@ -71,6 +76,17 @@ export class Lobby {
     $('#leave-lobby').onclick = () => this.leave();
     $('#win-mode').onchange = () => this.syncSettings();
     $('#game-mode').onchange = () => this.syncSettings();
+    const teamCount = $('#team-count');
+    teamCount.replaceChildren(...Array.from({ length: MAX_TEAMS - MIN_TEAMS + 1 }, (_, i) => {
+      const option = document.createElement('option');
+      option.value = String(MIN_TEAMS + i);
+      option.textContent = `${MIN_TEAMS + i} équipes`;
+      return option;
+    }));
+    $('#team-mode').onchange = () => this.syncTeams();
+    teamCount.onchange = () => this.syncTeams();
+    $('#team-balance').onclick = () => this.balance();
+    this.syncTeamUI();
     const mapSelect = $('#map-select');
     mapSelect.replaceChildren(...MAPS.map(map => {
       const option = document.createElement('option');
@@ -92,6 +108,7 @@ export class Lobby {
 
     n.on(MSG.HELLO, d => this.onHello(d));
     n.on(MSG.ROSTER, d => this.onRoster(d));
+    n.on(MSG.TEAM, d => this.onTeam(d));
     n.on(MSG.START, d => this.begin(d.config, d.you, d.names, d.appearances));
     n.on(MSG.REPLAY, d => this.onReplay(d));
     n.on(MSG.KICK, () => {
@@ -161,8 +178,9 @@ export class Lobby {
       this.status('Création du salon…');
       await this.network.createRoom();
       this.me = 0;
+      this.readTeamUI();
       this.players = [{
-        id: 0, name: this.nickname(), appearance: getAppearance(),
+        id: 0, team: 0, name: this.nickname(), appearance: getAppearance(),
         friendCode: this.friends?.code || null
       }];
       $('#display-code').textContent = this.network.roomCode;
@@ -197,8 +215,10 @@ export class Lobby {
     let name = String(d.name || 'Joueur').slice(0, 16), k = 2;
     const base = name;
     while (this.players.some(p => p.name === name)) name = `${base} ${k++}`;
-    this.players = this.players.filter(p => p.id !== d.from).concat({
+    const others = this.players.filter(p => p.id !== d.from);
+    this.players = others.concat({
       id: d.from,
+      team: leastPopulatedTeam(others, this.teamCount),
       name,
       appearance: normalizeAppearance(d.appearance),
       friendCode: typeof d.friendCode === 'string' && /^[A-HJ-NP-Z2-9]{8}$/.test(d.friendCode)
@@ -211,7 +231,10 @@ export class Lobby {
   publish() {
     this.players.sort((a, b) => a.id - b.id);
     for (const p of this.players) if (p.id !== 0) {
-      this.network.sendTo(p.id, MSG.ROSTER, { players: this.players, you: p.id, map: this.selectedMap });
+      this.network.sendTo(p.id, MSG.ROSTER, {
+        players: this.players, you: p.id, map: this.selectedMap,
+        teams: { on: this.teamsOn, count: this.teamCount }
+      });
     }
     this.render();
   }
@@ -220,6 +243,8 @@ export class Lobby {
     if (this.started || !Array.isArray(d.players)) return;
     this.players = d.players;
     this.me = d.you;
+    this.teamsOn = !!d.teams?.on;
+    this.teamCount = clampTeamCount(d.teams?.count);
     this.selectedMap = getMap(d.map).id;
     $('#map-select').value = this.selectedMap;
     this.syncMap();
@@ -236,19 +261,79 @@ export class Lobby {
         appearance: p.appearance,
         friendCode: p.friendCode,
         friend: !!p.friendCode && !!this.friends?.isFriend(p.friendCode),
-        pending: !!p.friendCode && !!this.friends?.pending.includes(p.friendCode)
+        pending: !!p.friendCode && !!this.friends?.pending.includes(p.friendCode),
+        team: p.team
       })),
       this.network.isHost,
       id => this.kickPlayer(id),
-      // Bots : le roster affiche une case « niveau » (min–max) par bot ; l'hôte la modifie via onBotLevel(id, niveau).
-      { onBotLevel: (id, level) => this.setBotLevel(id, level), minLevel: BOT_LEVEL_MIN, maxLevel: BOT_LEVEL_MAX }
+      // Bots : le roster affiche le niveau (min–max) de chaque bot ; l'hôte la modifie via onBotLevel(id, niveau).
+      { onBotLevel: (id, level) => this.setBotLevel(id, level), minLevel: BOT_LEVEL_MIN, maxLevel: BOT_LEVEL_MAX },
+      { on: this.teamsOn, count: this.teamCount, onTeam: (id, team) => this.setTeam(id, team) }
     );
     const start = $('#start-game');
-    start.disabled = n < 2;
+    const teamsBlocked = this.teamsOn && activeTeamCount(this.players) < 2;
+    start.disabled = n < 2 || teamsBlocked;
+    start.title = n < 2
+      ? 'Il faut au moins 2 joueurs pour lancer la partie.'
+      : teamsBlocked ? 'Il faut au moins 2 équipes avec des joueurs.' : '';
     this.syncBotButton();
     this.status(this.network.isHost
-      ? (n < 2 ? 'Partage ce code avec tes amis (jusqu’à 16 joueurs).' : `${n} joueurs connectés. Lance la partie quand tout le monde est là.`)
-      : `${n} joueur${n > 1 ? 's' : ''} dans le salon. L’hôte va lancer la partie…`);
+      ? (n < 2
+        ? 'Partage ce code avec tes amis (jusqu’à 16 joueurs).'
+        : teamsBlocked
+          ? 'Il faut au moins 2 équipes avec des joueurs. Clique sur la pastille d’un joueur pour le changer d’équipe.'
+          : `${n} joueurs connectés. Lance la partie quand tout le monde est là.`)
+      : this.teamsOn
+        ? `${n} joueur${n > 1 ? 's' : ''} dans le salon. Clique sur ta pastille de couleur pour choisir ton équipe.`
+        : `${n} joueur${n > 1 ? 's' : ''} dans le salon. L’hôte va lancer la partie…`);
+  }
+
+  // ---------------------------------------------------------------- équipes
+  // Chaque joueur (bots compris) a toujours une équipe `team` (0..teamCount-1) ; elle ne compte que si `teamsOn`.
+  // Un invité demande son changement à l'hôte (MSG.TEAM) ; l'hôte peut placer n'importe qui.
+
+  /** Hôte : lit le mode et le nombre d'équipes dans l'interface. */
+  readTeamUI() {
+    this.teamsOn = $('#team-mode').value === 'on';
+    this.teamCount = clampTeamCount($('#team-count').value);
+  }
+
+  syncTeamUI() {
+    const on = $('#team-mode').value === 'on';
+    $('#team-count-wrap').classList.toggle('hidden', !on);
+    $('#team-balance-wrap').classList.toggle('hidden', !on);
+  }
+
+  syncTeams() {
+    this.syncTeamUI();
+    if (!this.network.isHost) return;
+    this.readTeamUI();
+    fixTeams(this.players, this.teamCount); // joueurs d'une équipe supprimée → équipe existante
+    this.publish();
+  }
+
+  onTeam(d) {
+    if (!this.network.isHost) return;
+    this.setTeam(d.from, d.team);
+  }
+
+  setTeam(id, team) {
+    if (this.started || this.postGame || !this.teamsOn) return;
+    if (!this.network.isHost) {
+      if (id === this.me) this.network.send(MSG.TEAM, { team });
+      return;
+    }
+    const player = this.players.find(p => p.id === id);
+    if (!player || !validTeam(team, this.teamCount)) return;
+    player.team = team;
+    this.publish();
+  }
+
+  /** Hôte : répartition équitable de tous les joueurs. */
+  balance() {
+    if (!this.network.isHost || this.started || !this.teamsOn) return;
+    balanceTeams(this.players, this.teamCount);
+    this.publish();
   }
 
   // ---------------------------------------------------------------- bots
@@ -263,7 +348,7 @@ export class Lobby {
     button.id = 'add-bot';
     button.type = 'button';
     button.className = anchor.className; // même style que le bouton Paramètres
-    button.textContent = '+ AJOUTER UN BOT';
+    button.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg><span>Ajouter un bot</span>';
     button.onclick = () => this.addBot();
     anchor.before(button);
     this.syncBotButton();
@@ -302,6 +387,7 @@ export class Lobby {
       name: pool[Math.floor(Math.random() * pool.length)],
       appearance: randomAppearance(),
       friendCode: null,
+      team: leastPopulatedTeam(this.players, this.teamCount),
       bot: true,
       level: BOT_LEVEL_DEFAULT
     });
@@ -339,6 +425,7 @@ export class Lobby {
 
   startGame() {
     if (!this.network.isHost || this.players.length < 2) return;
+    if (this.teamsOn && activeTeamCount(this.players) < 2) return;
     const config = {
       gameMode: $('#game-mode').value,
       mode: $('#win-mode').value,
@@ -365,7 +452,14 @@ export class Lobby {
       appearances[i] ??= null;
     }
     this.network.locked = true;
-    config = { ...config, bots: players.filter(p => p.bot).map(p => ({ id: p.id, level: clampBotLevel(p.level) })) };
+    // Équipes : of[id] = équipe du joueur (-1 si absent).
+    let teams = null;
+    if (this.teamsOn) {
+      const of = Array.from({ length: MAX_PLAYERS }, () => -1);
+      for (const p of players) of[p.id] = p.team;
+      teams = { count: this.teamCount, of };
+    }
+    config = { ...config, teams, bots: players.filter(p => p.bot).map(p => ({ id: p.id, level: clampBotLevel(p.level) })) };
     for (const p of players) if (p.id !== 0 && !p.bot) {
       this.network.sendTo(p.id, MSG.START, { config, names, appearances, you: p.id });
     }
@@ -435,7 +529,7 @@ export class Lobby {
     const players = this.players.filter(p =>
       p.bot || (this.replayVotes.has(p.id) && (p.id === 0 || this.network.conns.get(p.id)?.open))
     );
-    if (players.length < 2) return;
+    if (players.length < 2 || (this.teamsOn && activeTeamCount(players) < 2)) return;
     this.players = players;
     this.launchGame(this.game.config, players);
   }
